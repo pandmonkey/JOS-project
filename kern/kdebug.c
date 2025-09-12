@@ -47,6 +47,7 @@ extern const char __STABSTR_END__[];		// End of string table
 //		stab_binsearch(stabs, &left, &right, N_SO, 0xf0100184);
 //	will exit setting left = 118, right = 554.
 //
+// 不同 函数 / 源文件的地址不同, 在地址 a 打印调试信息, 就是找到满足 address < a 的 最大 index 的符号, 寻找即可
 static void
 stab_binsearch(const struct Stab *stabs, int *region_left, int *region_right,
 	       int type, uintptr_t addr)
@@ -179,7 +180,11 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	//	Look at the STABS documentation and <inc/stab.h> to find
 	//	which one.
 	// Your code here.
-
+	stab_binsearch(stabs, &lline, &rline, N_SLINE, addr);
+	if (lline > rline) {
+		return -1;
+	}
+	info->eip_line = rline;
 
 	// Search backwards from the line number for the relevant filename
 	// stab.

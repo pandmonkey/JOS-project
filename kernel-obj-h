@@ -1,0 +1,27 @@
+
+obj/kern/kernel:     file format elf32-i386
+
+Sections:
+Idx Name          Size      VMA       LMA       File off  Algn
+  0 .text         00001aa1  f0100000  00100000  00001000  2**4
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  1 .rodata       00000710  f0101ac0  00101ac0  00002ac0  2**5
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  2 .stab         0000387d  f01021d0  001021d0  000031d0  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  3 .stabstr      00001557  f0105a4d  00105a4d  00006a4d  2**0
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  4 .data         00009300  f0107000  00107000  00008000  2**12
+                  CONTENTS, ALLOC, LOAD, DATA
+  5 .got          00000008  f0110300  00110300  00011300  2**2
+                  CONTENTS, ALLOC, LOAD, DATA
+  6 .got.plt      0000000c  f0110308  00110308  00011308  2**2
+                  CONTENTS, ALLOC, LOAD, DATA
+  7 .data.rel.local 00001000  f0111000  00111000  00012000  2**12
+                  CONTENTS, ALLOC, LOAD, DATA
+  8 .data.rel.ro.local 00000044  f0112000  00112000  00013000  2**2
+                  CONTENTS, ALLOC, LOAD, DATA
+  9 .bss          00000661  f0112060  00112060  00013060  2**5
+                  CONTENTS, ALLOC, LOAD, DATA
+ 10 .comment      0000002d  00000000  00000000  000136c1  2**0
+                  CONTENTS, READONLY

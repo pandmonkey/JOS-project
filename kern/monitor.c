@@ -62,7 +62,21 @@ mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 	// ebp 以上还有 eip, 未知数量个 args
 	uint32_t *ebp = (uint32_t *)read_ebp(); // 得到当前的 rbp pointer
 	while (ebp) {
+		struct Eipdebuginfo info;
 		cprintf("ebp %08x  eip %08x  args %08x %08x %08x %08x %08x\n", ebp, ebp[1], ebp[2], ebp[3], ebp[4], ebp[5], ebp[6]);
+		int status = debuginfo_eip(ebp[1], &info);
+		// const  char* filename=(&info)->eip_file;
+	    // int line = (&info)->eip_line;
+	    // const char * not_null_ter_fname=(&info)->eip_fn_name;
+	    // int offset = (int)(ebp[1])-(int)((&info)->eip_fn_addr);
+	    // cprintf("        %s:%d:  %.*s+%d\n",filename,line,info.eip_fn_namelen,not_null_ter_fname,offset);
+		const char *file = info.eip_file;
+		const int file_linenum = info.eip_line;
+
+		const int fn_length = info.eip_fn_namelen;
+		const char *fn_name = info.eip_fn_name;
+		const int fn_linenum = (uintptr_t)ebp[1] - info.eip_fn_addr;
+			cprintf("     %s:%d:  %.*s+%d\n", file, file_linenum, fn_length, fn_name, fn_linenum);
 		ebp = (uint32_t *)(*ebp);
 	}
 	return 0;
