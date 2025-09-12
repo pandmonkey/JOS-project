@@ -58,6 +58,13 @@ int
 mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 {
 	// Your code here.
+	// 读出 ebp 的指针
+	// ebp 以上还有 eip, 未知数量个 args
+	uint32_t *ebp = (uint32_t *)read_ebp(); // 得到当前的 rbp pointer
+	while (ebp) {
+		cprintf("ebp %08x  eip %08x  args %08x %08x %08x %08x %08x\n", ebp, ebp[1], ebp[2], ebp[3], ebp[4], ebp[5], ebp[6]);
+		ebp = (uint32_t *)(*ebp);
+	}
 	return 0;
 }
 

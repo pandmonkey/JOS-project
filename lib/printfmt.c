@@ -32,6 +32,17 @@ static const char * const error_string[MAXERROR] =
  * Print a number (base <= 16) in reverse order,
  * using specified putch function and associated pointer putdat.
  */
+
+/**
+ * @brief 打印 num , 思路: 
+ * 
+ * @param putch 被包装到里面的打印函数, 将数字和填充等内容 p 到 putdat 中
+ * @param putdat buffer
+ * @param num number to be printed
+ * @param base 进制
+ * @param width 最小宽度 如果数字小于 width, 在缓冲区补 padc
+ * @param padc padding character
+ */
 static void
 printnum(void (*putch)(int, void*), void *putdat,
 	 unsigned long long num, unsigned base, int width, int padc)
@@ -48,6 +59,7 @@ printnum(void (*putch)(int, void*), void *putdat,
 	// then print this (the least significant) digit
 	putch("0123456789abcdef"[num % base], putdat);
 }
+
 
 // Get an unsigned int of various possible sizes from a varargs list,
 // depending on the lflag parameter.
@@ -89,6 +101,9 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 	char padc;
 
 	while (1) {
+
+		// 循环读入 format 串
+		// num = %d 如果没到该格式化的时候, 就输出
 		while ((ch = *(unsigned char *) fmt++) != '%') {
 			if (ch == '\0')
 				return;
@@ -114,7 +129,7 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 			padc = '0';
 			goto reswitch;
 
-		// width field
+		// width field : %5d
 		case '1':
 		case '2':
 		case '3':
@@ -206,10 +221,9 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 		// (unsigned) octal
 		case 'o':
 			// Replace this with your code.
-			putch('X', putdat);
-			putch('X', putdat);
-			putch('X', putdat);
-			break;
+			num = getuint(&ap, lflag);
+			base = 8;
+			goto number;
 
 		// pointer
 		case 'p':
@@ -243,6 +257,16 @@ vprintfmt(void (*putch)(int, void*), void *putdat, const char *fmt, va_list ap)
 	}
 }
 
+
+/**
+ * @brief 
+ * 	printfmt: fmt后面跟随 fmt里面的 %d 等对应的数字等内容
+ * 	将fmt修饰好的内容利用 putch 放入 putdat 中
+ * @param putch 
+ * @param putdat 
+ * @param fmt 
+ * @param ... 可变参数
+ */
 void
 printfmt(void (*putch)(int, void*), void *putdat, const char *fmt, ...)
 {

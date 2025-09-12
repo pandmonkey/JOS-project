@@ -129,6 +129,12 @@ static unsigned addr_6845;
 static uint16_t *crt_buf;
 static uint16_t crt_pos;
 
+
+/**
+ * @brief 检测当前显示设备类型(CGA/单色), 
+ * 初始化显示缓冲区和光标位置
+ * 
+ */
 static void
 cga_init(void)
 {
@@ -139,7 +145,9 @@ cga_init(void)
 	cp = (uint16_t*) (KERNBASE + CGA_BUF);
 	was = *cp;
 	*cp = (uint16_t) 0xA55A;
+	// 尝试访问 CGA缓冲区, 写入 0xA55A 如果不一致, 说明不是 CGA, 
 	if (*cp != 0xA55A) {
+		// 切换到单色 MONO 显示缓冲
 		cp = (uint16_t*) (KERNBASE + MONO_BUF);
 		addr_6845 = MONO_BASE;
 	} else {
@@ -153,7 +161,9 @@ cga_init(void)
 	outb(addr_6845, 15);
 	pos |= inb(addr_6845 + 1);
 
+	// 保存缓冲区位置
 	crt_buf = (uint16_t*) cp;
+	// 保存光标位置
 	crt_pos = pos;
 }
 
@@ -167,35 +177,38 @@ cga_putc(int c)
 		c |= 0x0700;
 
 	switch (c & 0xff) {
-	case '\b':
+	case '\b': // 处理退格
 		if (crt_pos > 0) {
 			crt_pos--;
 			crt_buf[crt_pos] = (c & ~0xff) | ' ';
 		}
 		break;
-	case '\n':
+	case '\n': // 处理换行
 		crt_pos += CRT_COLS;
 		/* fallthru */
-	case '\r':
+	case '\r': // 处理回车
 		crt_pos -= (crt_pos % CRT_COLS);
 		break;
-	case '\t':
+	case '\t': // 处理tab
 		cons_putc(' ');
 		cons_putc(' ');
 		cons_putc(' ');
 		cons_putc(' ');
 		cons_putc(' ');
 		break;
-	default:
+	default: // 普通字符输出
 		crt_buf[crt_pos++] = c;		/* write the character */
 		break;
 	}
 
 	// What is the purpose of this?
+	// 屏幕滚动:
+		// 如果cursor超出屏幕, 将内容上移
 	if (crt_pos >= CRT_SIZE) {
 		int i;
 
-		memmove(crt_buf, crt_buf + CRT_COLS, (CRT_SIZE - CRT_COLS) * sizeof(uint16_t));
+		memmove(crt_buf, crt_buf + CRT_COLS, (CRT_SIZE - CRT_COLS) * sizeof(uint16_t)); // 将第二行到最后一行的内容, 移动到第一行到倒数第二行的内容
+		// 清空最后一行的内容
 		for (i = CRT_SIZE - CRT_COLS; i < CRT_SIZE; i++)
 			crt_buf[i] = 0x0700 | ' ';
 		crt_pos -= CRT_COLS;
@@ -206,6 +219,7 @@ cga_putc(int c)
 	outb(addr_6845 + 1, crt_pos >> 8);
 	outb(addr_6845, 15);
 	outb(addr_6845 + 1, crt_pos);
+	// 光标回到第一行开头
 }
 
 

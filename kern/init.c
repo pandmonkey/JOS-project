@@ -35,6 +35,22 @@ i386_init(void)
 
 	cprintf("6828 decimal is %o octal!\n", 6828);
 
+	// question 1:
+	int x = 1, y = 3, z = 4;
+	cprintf("x %d, y %x, z %d\n", x, y, z);
+
+	// question 2:
+	// 1. 57616 hex: e110, %x会输出57616的16进制格式
+	// 2. &i 字符串输出: 由于是小端法, 72(r) 6c(l) 64(d) 00(结束)
+	// 
+	unsigned int i = 0x00646c72;
+	cprintf("H%x, Wo%s\n", 57616, &i);
+
+
+	// question 3:
+	cprintf("x=%d y=%d", 3);
+
+
 	// Test the stack backtrace function (lab 1 only)
 	test_backtrace(5);
 

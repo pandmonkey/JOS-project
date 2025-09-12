@@ -1,4 +1,4 @@
-#include <inc/x86.h>
+  #include <inc/x86.h>
 #include <inc/elf.h>
 
 /**********************************************************************
@@ -29,16 +29,34 @@
  *  * bootmain() in this file takes over, reads in the kernel and jumps to it.
  **********************************************************************/
 
+// boot loader 分为两部分, boot.S 和 main.c 先执行 boot.S 再执行 main.c
+/*
+boot.S:
+	设置 stack 的相关内容, 进入保护模式, 从而可以运行 C 代码
+
+main.c:
+	继续操作....
+*/
+
 #define SECTSIZE	512
 #define ELFHDR		((struct Elf *) 0x10000) // scratch space
 
 void readsect(void*, uint32_t);
 void readseg(uint32_t, uint32_t, uint32_t);
 
+
+/**
+ * @brief 
+ *  1. 读取 boot 的 ELF
+ *  2. 读取 ELF 的相关内容
+ * 	3. 程序的 code 段, data 等是分开的, 它们的指针在Proghdr中连续排布, 通过 for 连续读入
+ * 	4. 最后加载即可
+ */
 void
 bootmain(void)
 {
-	struct Proghdr *ph, *eph;
+	struct Proghdr *ph, *eph; // Program Header 描述 ELF 文件中各个 segment:
+	
 
 	// read 1st page off disk
 	readseg((uint32_t) ELFHDR, SECTSIZE*8, 0);
@@ -46,6 +64,8 @@ bootmain(void)
 	// is this a valid ELF?
 	if (ELFHDR->e_magic != ELF_MAGIC)
 		goto bad;
+	// 读入 elf 如果 magic 不匹配 报错
+	// q: ELF一定占一个 sector 吗?
 
 	// load each program segment (ignores ph flags)
 	ph = (struct Proghdr *) ((uint8_t *) ELFHDR + ELFHDR->e_phoff);
@@ -79,11 +99,13 @@ readseg(uint32_t pa, uint32_t count, uint32_t offset)
 	pa &= ~(SECTSIZE - 1);
 
 	// translate from bytes to sectors, and kernel starts at sector 1
+	// 获取开始的扇区
 	offset = (offset / SECTSIZE) + 1;
 
 	// If this is too slow, we could read lots of sectors at a time.
 	// We'd write more to memory than asked, but it doesn't matter --
 	// we load in increasing order.
+	// 每次读一个扇区, 知道读够字节
 	while (pa < end_pa) {
 		// Since we haven't enabled paging yet and we're using
 		// an identity segment mapping (see boot.S), we can
@@ -103,6 +125,7 @@ waitdisk(void)
 		/* do nothing */;
 }
 
+// 将 offset sect 的内容读入
 void
 readsect(void *dst, uint32_t offset)
 {

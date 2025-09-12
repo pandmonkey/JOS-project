@@ -22,6 +22,13 @@ vcprintf(const char *fmt, va_list ap)
 	return cnt;
 }
 
+/**
+ * @brief 对 vcprintf 的封装, 调用者不需要自己搞接口了
+ * 
+ * @param fmt 
+ * @param ... 
+ * @return int 
+ */
 int
 cprintf(const char *fmt, ...)
 {

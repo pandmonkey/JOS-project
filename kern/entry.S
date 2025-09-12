@@ -60,11 +60,14 @@ entry:
 	movl	%cr0, %eax
 	orl	$(CR0_PE|CR0_PG|CR0_WP), %eax
 	movl	%eax, %cr0
-
+	# 打开了分页:
+	# 导致 0xf0100000 的地址被映射到了 0x00100000
+	#
 	# Now paging is enabled, but we're still running at a low EIP
 	# (why is this okay?).  Jump up above KERNBASE before entering
 	# C code.
 	mov	$relocated, %eax
+	# 第一条不让访问的地址
 	jmp	*%eax
 relocated:
 
