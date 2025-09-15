@@ -42,3 +42,15 @@ cprintf(const char *fmt, ...)
 	return cnt;
 }
 
+
+void set_fore_color(int clr) {
+	cprintf("\033[%dm", clr);
+}
+
+void set_bg_color(int clr) {
+	cprintf("\033[1%dm", clr);
+}
+
+void reset_color() {
+	cprintf("\033[0m");
+}

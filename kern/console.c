@@ -167,11 +167,8 @@ cga_init(void)
 	crt_pos = pos;
 }
 
-
-
-static void
-cga_putc(int c)
-{
+static void 
+cga_putc_inner(int c) {
 	// if no attribute given, then use black on white
 	if (!(c & ~0xFF))
 		c |= 0x0700;
@@ -220,6 +217,131 @@ cga_putc(int c)
 	outb(addr_6845, 15);
 	outb(addr_6845 + 1, crt_pos);
 	// 光标回到第一行开头
+}
+
+
+
+#define INPUT_NUMSTRING_LENGTH 10 // 输入的可能长度
+#define INPUT_NUMS 1024 // 输入的性质数量
+
+static int out_attr = 0x00;
+
+
+static int state = 0;
+
+static int attr_num = 0; // 输入的设置数字的数量
+static int attrs[INPUT_NUMS]; // 存储输入的设置数字
+
+static int input_loc = 0; // 代表输入的位数
+static char input[INPUT_NUMSTRING_LENGTH] ; // 代表输入的字符串形式
+
+
+bool isdigit(char a) {
+    if (a < '0' || a > '9') {
+        return false;
+    }
+    return true;
+}
+
+
+int stoi(const char* a, int len) {
+    int outcome = 0;
+	for (int i = 0; i < len; i++) {
+		outcome = (a[i] - '0') + outcome * 10;
+	}
+    return outcome;
+}
+
+void clear_all() {
+    clear_attrs();
+    clear_input();
+}
+
+void clear_attrs() {
+    for (int i = 0; i < attr_num; i++) {
+        attrs[i] = 0;
+    }
+    attr_num = 0;
+}
+
+void clear_input() {
+    for (int i = 0; i < input_loc; i++) {
+        input[i] = 0;
+    }
+    input_loc = 0;
+}
+
+void set_attrs() {
+    for (int i = 0; i < attr_num; i++) {
+		int n = attrs[i];
+		if (n == 0) {
+			out_attr = 0x07;
+		} else if (n <= 10) {
+			out_attr = (out_attr & ~(0x0f)) | n;
+		} else if (attrs[i] <= 20) {
+			out_attr = (out_attr & ~(0xf0)) | (n - 10) << 4;
+		}
+	}
+} // 控制颜色的数量
+void cga_putc(int c)
+{
+
+    // 1. 根据不同的状态选定不同的内容
+    switch (state)
+    {
+    case 0:
+        if ((char) c == '\033') {
+            state = 1;
+        } else {
+            // inner put c
+			cga_putc_inner(out_attr << 8 | (c & 0xff));
+        }
+        break;
+
+    case 1:
+        if ((char) c == '[') {
+            state = 2;
+        } else {
+            state = 0;
+        }
+        break;
+
+    case 2:
+        if (isdigit((char) c)) {
+            input[input_loc++] = (char) c;
+            state = 3;
+        } else {
+            clear_all();
+            state = 0;
+        }
+        break;
+
+    case 3:
+        if ((char) c == 'm') {
+            // update all the attribute and return to 0
+			int attr = stoi(input, input_loc);
+			attrs[attr_num++] = attr;
+			set_attrs();
+			clear_all();
+            state = 0;
+        } else if ((char) c == ';') {
+            int attr = stoi(input, input_loc);
+            attrs[attr_num++] = attr; // 保存属性
+            clear_input();
+            state = 2;
+        } else if (isdigit((char) c)) {
+			input[input_loc++] = (char) c;
+            state = 3;
+		} 
+		else {
+            clear_all();
+            state = 0;
+        }
+        break;
+    default:
+        break;
+    }
+
 }
 
 

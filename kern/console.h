@@ -20,6 +20,14 @@
 void cons_init(void);
 int cons_getc(void);
 
+bool isdigit(char a);
+int stoi(const char* a, int len);
+void clear_all();
+void clear_attrs();
+void clear_input();
+void set_attrs();
+static void cga_putc(int c);
+
 void kbd_intr(void); // irq 1
 void serial_intr(void); // irq 4
 

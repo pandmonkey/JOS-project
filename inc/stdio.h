@@ -7,6 +7,7 @@
 #define NULL	((void *) 0)
 #endif /* !NULL */
 
+
 // lib/console.c
 void	cputchar(int c);
 int	getchar(void);
@@ -21,6 +22,9 @@ int	vsnprintf(char *str, int size, const char *fmt, va_list);
 // lib/printf.c
 int	cprintf(const char *fmt, ...);
 int	vcprintf(const char *fmt, va_list);
+void set_fore_color(int clr);
+void set_bg_color(int clr);
+void reset_color();
 
 // lib/fprintf.c
 int	printf(const char *fmt, ...);
