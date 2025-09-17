@@ -283,6 +283,7 @@ void set_attrs() {
 		}
 	}
 } // 控制颜色的数量
+
 void cga_putc(int c)
 {
 
