@@ -90,7 +90,7 @@
 // IOPHYSMEM can be addressed at KERNBASE + IOPHYSMEM.  The hole ends
 // at physical address EXTPHYSMEM.
 #define IOPHYSMEM	0x0A0000
-#define EXTPHYSMEM	0x100000
+#define EXTPHYSMEM	0x100000 // 大小 (EXTPHYSMEM - IOPHYSMEM) / PAGESIZE
 
 // Kernel stack.
 #define KSTACKTOP	KERNBASE
