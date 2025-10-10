@@ -30,6 +30,7 @@ static inline void mark_use(size_t i) {
 	pages[i].pp_ref = 1;
 }
 
+
 // --------------------------------------------------------------
 // Detect machine's physical memory setup.
 // --------------------------------------------------------------
@@ -195,6 +196,11 @@ mem_init(void)
 	//      (ie. perm = PTE_U | PTE_P)
 	//    - pages itself -- kernel RW, user NONE
 	// Your code goes here:
+	
+	// 将 pages 保存着物理页们的元数据, 计算它们所占的空间后 映射到对应的部分中去
+	size_t bytes = ROUNDUP(npages * sizeof(struct PageInfo), PGSIZE) ;
+	boot_map_region(kern_pgdir, (uintptr_t)UPAGES, bytes, PADDR(pages), PTE_U | PTE_P);
+
 
 	//////////////////////////////////////////////////////////////////////
 	// Use the physical memory that 'bootstack' refers to as the kernel
@@ -207,6 +213,9 @@ mem_init(void)
 	//       overwrite memory.  Known as a "guard page".
 	//     Permissions: kernel RW, user NONE
 	// Your code goes here:
+	
+	boot_map_region(kern_pgdir, (uintptr_t)(KSTACKTOP - KSTKSIZE), KSTKSIZE, PADDR(bootstack), PTE_W); // 一段映射即可
+	
 
 	//////////////////////////////////////////////////////////////////////
 	// Map all of physical memory at KERNBASE.
@@ -216,6 +225,9 @@ mem_init(void)
 	// we just set up the mapping anyway.
 	// Permissions: kernel RW, user NONE
 	// Your code goes here:
+
+	uint64_t kernel_map_size = (1ULL << 32) - KERNBASE;
+	boot_map_region(kern_pgdir, KERNBASE, (size_t)(kernel_map_size), 0, PTE_W);
 
 	// Check that the initial page directory has been set up correctly.
 	check_kern_pgdir();
@@ -356,7 +368,6 @@ page_free(struct PageInfo *pp)
 	pp->pp_link = page_free_list;
 	page_free_list = pp;
 	
-
 }
 
 //
@@ -370,20 +381,22 @@ page_decref(struct PageInfo* pp)
 		page_free(pp);
 }
 
+// attention: 没有从 logical address 到 linear address 的步骤, 因为 GDT 将所有的段都设置成了从0开始
+//
 // Given 'pgdir', a pointer to a page directory, pgdir_walk returns
 // a pointer to the page table entry (PTE) for linear address 'va'.
 // This requires walking the two-level page table structure.
 //
 // The relevant page table page might not exist yet.
-// If this is true, and create == false, then pgdir_walk returns NULL.
+// If this is true, and create == false, then pgdir_walk returns NULL. √
 // Otherwise, pgdir_walk allocates a new page table page with page_alloc.
-//    - If the allocation fails, pgdir_walk returns NULL.
-//    - Otherwise, the new page's reference count is incremented,
-//	the page is cleared,
-//	and pgdir_walk returns a pointer into the new page table page.
+//    - If the allocation fails, pgdir_walk returns NULL. √
+//    - Otherwise, the new page's reference count is incremented, √
+//	the page is cleared,√
+//	and pgdir_walk returns a pointer into the new page table page. √
 //
 // Hint 1: you can turn a PageInfo * into the physical address of the
-// page it refers to with page2pa() from kern/pmap.h.
+// page it refers to with page2pa() from kern/pmap.h. √
 //
 // Hint 2: the x86 MMU checks permission bits in both the page directory
 // and the page table, so it's safe to leave permissions in the page
@@ -392,11 +405,34 @@ page_decref(struct PageInfo* pp)
 // Hint 3: look at inc/mmu.h for useful macros that manipulate page
 // table and page directory entries.
 //
+
+// 作用仅限于走二级页表 拿到对应 pte 的地址即可, 功能没包括写
 pte_t *
 pgdir_walk(pde_t *pgdir, const void *va, int create)
-{
-	// Fill this function in
-	return NULL;
+{	assert((uintptr_t) pgdir % PGSIZE == 0); // 检验是否对齐
+	// 分解出地址的相关内容
+	pde_t *pde = &pgdir[PDX(va)];
+
+
+	if (!(*pde & PTE_P)) {
+		// 不可创建
+		if (!create) {
+			return NULL;
+		}
+		struct PageInfo *pt = page_alloc(ALLOC_ZERO); // 分配一个新页
+		
+		// 分配失败
+		if (!pt) {
+			return NULL;
+		}
+
+		pt->pp_ref++;
+		*pde = page2pa(pt) | (PTE_P | PTE_W | PTE_U); // 填写 entry
+	}
+
+	pte_t *pt_kva = (pte_t *) KADDR(PTE_ADDR(*pde)); // PTE_ADDR 转成 pa, KADDR 转化成 kva 
+
+	return &pt_kva[PTX(va)]; // 返回的是 pt 中的对应 entry
 }
 
 //
@@ -413,20 +449,35 @@ pgdir_walk(pde_t *pgdir, const void *va, int create)
 static void
 boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm)
 {
-	// Fill this function in
+	// 常检验对齐:
+	assert((va % PGSIZE) == 0);
+	assert((size % PGSIZE) == 0);
+	assert((pa % PGSIZE) == 0);
+
+	size_t n = size >> PGSHIFT; // 总页数
+	for (size_t i = 0; i < n; i++) {
+		pte_t *pte = pgdir_walk(pgdir, (void*)va, 1);
+		assert(pte != NULL);
+		*pte = pa | perm | PTE_P; // 写入PTE
+		va += PGSIZE;
+		pa += PGSIZE;
+	} 
+	// 不需要考虑 size 太大导致溢出一个 pde 的问题:
+	// pde 溢出 --> 查无此 pde --> 自动分配了
+
 }
 
 //
 // Map the physical page 'pp' at virtual address 'va'.
 // The permissions (the low 12 bits) of the page table entry
-// should be set to 'perm|PTE_P'.
+// should be set to 'perm|PTE_P'. √
 //
 // Requirements
-//   - If there is already a page mapped at 'va', it should be page_remove()d.
+//   - If there is already a page mapped at 'va', it should be page_remove()d. √
 //   - If necessary, on demand, a page table should be allocated and inserted
-//     into 'pgdir'.
-//   - pp->pp_ref should be incremented if the insertion succeeds.
-//   - The TLB must be invalidated if a page was formerly present at 'va'.
+//     into 'pgdir'. √
+//   - pp->pp_ref should be incremented if the insertion succeeds. √
+//   - The TLB must be invalidated if a page was formerly present at 'va'.√
 //
 // Corner-case hint: Make sure to consider what happens when the same
 // pp is re-inserted at the same virtual address in the same pgdir.
@@ -436,7 +487,7 @@ boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm
 //
 // RETURNS:
 //   0 on success
-//   -E_NO_MEM, if page table couldn't be allocated
+//   -E_NO_MEM, if page table couldn't be allocated √
 //
 // Hint: The TA solution is implemented using pgdir_walk, page_remove,
 // and page2pa.
@@ -444,7 +495,19 @@ boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm
 int
 page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
 {
-	// Fill this function in
+	pte_t *pte = pgdir_walk(pgdir, va, 1);
+
+	if (!pte) {
+		return -E_NO_MEM;
+	}
+
+	physaddr_t pa = page2pa(pp);
+	pp->pp_ref++;
+
+	if (*pte & PTE_P) {
+		page_remove(pgdir, va);
+	}
+	*pte = pa | perm | PTE_P;
 	return 0;
 }
 
@@ -453,30 +516,41 @@ page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
 // If pte_store is not zero, then we store in it the address
 // of the pte for this page.  This is used by page_remove and
 // can be used to verify page permissions for syscall arguments,
-// but should not be used by most callers.
+// but should not be used by most callers. √
 //
-// Return NULL if there is no page mapped at va.
+// Return NULL if there is no page mapped at va. √
 //
 // Hint: the TA solution uses pgdir_walk and pa2page.
 //
+
+// pte_store非0时, 该page的pte放入这里面 方便之后使用
+
 struct PageInfo *
 page_lookup(pde_t *pgdir, void *va, pte_t **pte_store)
 {
-	// Fill this function in
-	return NULL;
+	pte_t *pte = pgdir_walk(pgdir, va, 0);
+	if ((!pte) || !(*pte & PTE_P)) {
+		return NULL;
+	}
+	// 说明成功取出了一条 pte 对应的地址
+	if (pte_store) {
+		*pte_store = pte; // 存储相关指针
+	}
+	return pa2page(PTE_ADDR(*pte));
+
 }
 
 //
 // Unmaps the physical page at virtual address 'va'.
-// If there is no physical page at that address, silently does nothing.
+// If there is no physical page at that address, silently does nothing. √
 //
 // Details:
 //   - The ref count on the physical page should decrement.
-//   - The physical page should be freed if the refcount reaches 0.
+//   - The physical page should be freed if the refcount reaches 0.√
 //   - The pg table entry corresponding to 'va' should be set to 0.
 //     (if such a PTE exists)
 //   - The TLB must be invalidated if you remove an entry from
-//     the page table.
+//     the page table. √
 //
 // Hint: The TA solution is implemented using page_lookup,
 // 	tlb_invalidate, and page_decref.
@@ -484,7 +558,14 @@ page_lookup(pde_t *pgdir, void *va, pte_t **pte_store)
 void
 page_remove(pde_t *pgdir, void *va)
 {
-	// Fill this function in
+	pte_t *pte;
+	struct PageInfo *pp = page_lookup(pgdir, va, &pte);
+	if (!pp) return;
+
+	assert(*pte & PTE_P);
+	*pte = 0; 
+	tlb_invalidate(pgdir, va);
+	page_decref(pp);
 }
 
 //
@@ -750,6 +831,7 @@ check_page(void)
 
 	// free pp0 and try again: pp0 should be used for page table
 	page_free(pp0);
+	cprintf("begin\n");
 	assert(page_insert(kern_pgdir, pp1, 0x0, PTE_W) == 0);
 	assert(PTE_ADDR(kern_pgdir[0]) == page2pa(pp0));
 	assert(check_va2pa(kern_pgdir, 0x0) == page2pa(pp1));

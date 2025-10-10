@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "调试 JOS (连接到 QEMU)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/obj/kern/kernel",
+      "cwd": "${workspaceFolder}",
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "miDebuggerServerAddress": "127.0.0.1:26000",
+      "miDebuggerArgs": "--nh",         // 不读取任何 .gdbinit
+      "stopAtEntry": false,
+      "setupCommands": [
+        { "text": "-enable-pretty-printing", "ignoreFailures": true },
+        { "text": "set architecture i386",   "ignoreFailures": true },
+        { "text": "set pagination off",      "ignoreFailures": true }
+      ],
+      "logging": { "engineLogging": true }
+    }
+  ]
+}
