@@ -24,7 +24,9 @@ struct Command {
 static struct Command commands[] = {
 	{ "help", "Display this list of commands", mon_help },
 	{ "kerninfo", "Display information about the kernel", mon_kerninfo },
-	{"backtrace", "Backtrace the details of called functions", mon_backtrace}
+	{"backtrace", "Backtrace the details of called functions", mon_backtrace},
+	{"showmap", "Show VA -> PA and its permissions", mon_showmap},
+	{"setperm", "Set the VA -> PA's permissions", mon_setperm},
 };
 
 /***** Implementations of basic kernel monitor commands *****/
@@ -79,6 +81,78 @@ mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 		const int fn_linenum = (uintptr_t)ebp[1] - info.eip_fn_addr;
 			cprintf("     %s:%d:  %.*s+%d\n", file, file_linenum, fn_length, fn_name, fn_linenum);
 		ebp = (uint32_t *)(*ebp);
+	}
+	return 0;
+}
+
+int mon_showmap(int argc, char **argv, struct Trapframe *tf) {
+	// 先判断 showmap 的相关参数是否合法
+	if (argc < 2 || argc > 3) {
+		showmap_usage();
+		return 0;
+	}
+	
+	char *endp = NULL;
+	uintptr_t va_start = (uintptr_t)strtol(argv[1], &endp, 0);
+
+		if (endp == argv[1]) {
+		cprintf("showmap: invalid va_start\n");
+		return 0;
+    	}
+
+		if (argc == 2) {
+			// 单地址查询
+			struct map_entry me;
+			memset(&me, 0, sizeof(me));
+			int r = pmap_lookup_mapping(kern_pgdir, va_start, &me);
+			if (r != -3) {
+				
+				showmap_print_single_entry(&me); // 打印一条
+			} else {
+				// -3 --> -E_INVAL
+				cprintf("pgdir or map_entry is null"); // 发生错误
+				return 0;
+			}
+		} else {
+			// for 轮询
+			uintptr_t va_end = (uintptr_t) strtol(argv[2], &endp, 0);
+			if (endp == argv[2] || va_end <= va_start) {
+			cprintf("showmap: invalid range\n");
+			return 0;
+			}
+			for (size_t i = va_start; i < va_end; i+= PGSIZE) {
+				struct map_entry me;
+				memset(&me, 0, sizeof(me));
+				int r = pmap_lookup_mapping(kern_pgdir, i, &me);
+				if (r != -3) {
+					showmap_print_single_entry(&me);
+				} else {
+					cprintf("pgdir or map entry is null");
+					return 0;
+				}
+			}
+		}
+
+
+	return 0;
+}
+
+int mon_setperm(int argc, char **argv, struct Trapframe *tf) {
+	static const char *msg = 
+	"Usage: setperm <virtualaddress> <permission>\n"; // 输入不合法时
+	if (argc != 3) {
+		cprintf(msg);
+		return 0;
+	}
+
+	void *va = (void *)strtol(argv[1], NULL, 0);
+	uint32_t perm = (uint32_t)strtol(argv[2], NULL, 0);
+	pte_t *pte = pgdir_walk(kern_pgdir, va, 0);
+
+	if (pte && (*pte)&PTE_P) {
+		*pte = (*pte & (~0xfff)) | PTE_P | (perm & 0xfff);
+	} else {
+		cprintf("There is no such mapping\n");
 	}
 	return 0;
 }
@@ -144,4 +218,39 @@ monitor(struct Trapframe *tf)
 			if (runcmd(buf, tf) < 0)
 				break;
 	}
+}
+
+
+// Helper Functions:
+	// helper function of showmap
+	// showmap 参数不合法的使用说明
+static void showmap_usage() {
+	cprintf("Usage: showmap vastart [va_end]\n");
+	cprintf("- If only vastart is given, show mapping for that page. \n");
+	cprintf("- address may not be alligned because they will be ROUND_DOWNd. \n");
+}
+
+
+static int showmap_print_single_entry(const struct map_entry *me) {
+	if (me ->pte & PTE_P) {
+		const char *perm = get_perm(me->pte);
+				cprintf("VA %08lx -> PA %08lx  PTE=%08lx  Perm=%s\n",
+				(unsigned long)me->va,
+				(unsigned long)me->pa,
+				(unsigned long)me->pte,
+				perm);
+	} else {
+		cprintf("VA %08lx -> unmapped\n", (unsigned long)me->va);
+	}
+	return 0; 	
+}
+
+static inline char* get_perm(pte_t pte) {
+	static char buf[8];
+	int i = 0;
+	buf[i++] = (pte & PTE_P) ? 'P' : '-';
+	buf[i++] = (pte & PTE_W) ? 'W' : '-';
+	buf[i++] = (pte & PTE_U) ? 'U' : '-';
+	buf[i] = 0;
+	return buf;
 }

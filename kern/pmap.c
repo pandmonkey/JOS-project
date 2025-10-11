@@ -18,6 +18,8 @@ pde_t *kern_pgdir;		// Kernel's initial page directory
 struct PageInfo *pages;		// Physical page state array
 static struct PageInfo *page_free_list;	// Free list of physical pages
 
+
+
 // helper functions:
 
 static inline void mark_free(size_t i) {
@@ -30,6 +32,32 @@ static inline void mark_use(size_t i) {
 	pages[i].pp_ref = 1;
 }
 
+
+
+
+/**
+ * @brief 单个页面的查找
+ * 
+ * @param pgdir 一般为 kernpgdir
+ * @param va 
+ * @param ret 
+ * @return int : 0 成功, -E_INVAL: pgdir 或 ret 出错, -E_NO_MEM: 没有发生 map
+ */
+int pmap_lookup_mapping(pde_t *pgdir, uintptr_t va, struct map_entry *ret) {
+	if ((!pgdir) || (!ret)) {
+		return -E_INVAL;
+	} // 值不对
+	pte_t *pte = pgdir_walk(pgdir, (const void*)va, 0);
+	if ((!pte) || (!(*pte & PTE_P))) {
+		return -E_NO_MEM;
+	} // 没有 map
+
+	physaddr_t pa = PADDR((void *)va) | (va & 0xfff);
+	ret->va = ROUNDDOWN(va, PGSIZE);
+	ret->pa = ROUNDDOWN(pa, PGSIZE);
+	ret->pte = *pte;
+	return 0;
+}
 
 // --------------------------------------------------------------
 // Detect machine's physical memory setup.

@@ -8,6 +8,7 @@
 
 #include <inc/memlayout.h>
 #include <inc/assert.h>
+struct map_entry;
 
 extern char bootstacktop[], bootstack[];
 
@@ -58,6 +59,8 @@ void	page_free(struct PageInfo *pp);
 int	page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm);
 void	page_remove(pde_t *pgdir, void *va);
 struct PageInfo *page_lookup(pde_t *pgdir, void *va, pte_t **pte_store);
+
+int pmap_lookup_mapping(pde_t *pgdir, uintptr_t va, struct map_entry *ret);
 void	page_decref(struct PageInfo *pp);
 
 void	tlb_invalidate(pde_t *pgdir, void *va);
@@ -81,6 +84,12 @@ page2kva(struct PageInfo *pp)
 {
 	return KADDR(page2pa(pp));
 }
+
+struct map_entry {
+	uintptr_t va; // 虚拟地址
+	physaddr_t pa; // 物理地址
+	pte_t pte; // 原始pte用于解码权限
+};
 
 pte_t *pgdir_walk(pde_t *pgdir, const void *va, int create);
 
