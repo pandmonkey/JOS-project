@@ -17,6 +17,8 @@ int mon_kerninfo(int argc, char **argv, struct Trapframe *tf);
 int mon_backtrace(int argc, char **argv, struct Trapframe *tf);
 int mon_showmap(int argc, char **argv, struct Trapframe *tf);
 int mon_setperm(int argc, char **argv, struct Trapframe *tf);
+int mon_dumpva(int argc, char **argv, struct Trapframe *tf);
+int mon_dumppa(int argc, char **argv, struct Trapframe *tf);
 
 // Helper Functions
     // helper function of showmap:

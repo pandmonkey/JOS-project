@@ -27,6 +27,8 @@ static struct Command commands[] = {
 	{"backtrace", "Backtrace the details of called functions", mon_backtrace},
 	{"showmap", "Show VA -> PA and its permissions", mon_showmap},
 	{"setperm", "Set the VA -> PA's permissions", mon_setperm},
+	{"dumpva", "dump the contents of a specified virtual address", mon_dumpva}, 
+	{"dumppa", "dump the contents of a specified physical address", mon_dumppa}
 };
 
 /***** Implementations of basic kernel monitor commands *****/
@@ -153,6 +155,52 @@ int mon_setperm(int argc, char **argv, struct Trapframe *tf) {
 		*pte = (*pte & (~0xfff)) | PTE_P | (perm & 0xfff);
 	} else {
 		cprintf("There is no such mapping\n");
+	}
+	return 0;
+}
+
+int mon_dumpva(int argc, char **argv, struct Trapframe *tf) {
+	static const char *msg = 
+	"Usage: dumpva <start_va> <length>\n";
+	if (argc !=3) {
+		cprintf(msg);
+		return 0;
+	}
+	uintptr_t start = (uintptr_t)strtol(argv[1], NULL, 0);
+	size_t len = (size_t)strtol(argv[2], NULL, 0);
+	uintptr_t end = start + len;
+
+	uintptr_t cur = start;
+	while(cur < end) {
+		// 注意区分颗粒度, 每次是考虑一个页, 对于一个页的内容, 显然是适用一个 pte的
+
+		// 找到页末
+		uintptr_t page_end = MIN(ROUNDUP(cur + 1, PGSIZE), end); // 
+		// pgdir_walk 得到 pte_t *
+		pte_t * pte = pgdir_walk(kern_pgdir, (void *)cur, 0);
+		// 判定: 如果 unmapped 直接跳过
+		if (!pte || !(*pte && PTE_P)) {
+			cprintf( "VA 0x%08x-0x%08x: unmapped\n",
+				(uint32_t)ROUNDDOWN(cur, PGSIZE), (uint32_t)(page_end - 1)
+			);
+			cur = page_end;
+			continue;;
+		}
+		// 从 cur ~ page_end 进行 输出
+		while(cur < page_end) {
+			uint8_t v = *(uint8_t*)cur;
+			cprintf("VA 0x%08x -- %02x\n", (uint32_t)cur, v);
+			cur++;
+		}
+	}
+	return 0;
+}
+int mon_dumppa(int argc, char **argv, struct Trapframe *tf) {
+		static const char *msg = 
+	"Usage: dumppa <start_pa> <length>\n";
+	if (argc !=3) {
+		cprintf(msg);
+		return 0;
 	}
 	return 0;
 }
