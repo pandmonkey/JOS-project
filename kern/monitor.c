@@ -195,14 +195,50 @@ int mon_dumpva(int argc, char **argv, struct Trapframe *tf) {
 	}
 	return 0;
 }
-int mon_dumppa(int argc, char **argv, struct Trapframe *tf) {
-		static const char *msg = 
-	"Usage: dumppa <start_pa> <length>\n";
-	if (argc !=3) {
-		cprintf(msg);
-		return 0;
-	}
-	return 0;
+
+
+int
+mon_dumppa(int argc, char **argv, struct Trapframe *tf)
+{
+    static const char *usage = "Usage: dumppa <start_pa> <length>\n";
+    if (argc != 3) { cprintf("%s", usage); return 0; }
+
+    char *e1 = NULL, *e2 = NULL;
+    physaddr_t start = (physaddr_t)strtol(argv[1], &e1, 0);
+    size_t     len   = (size_t)strtol(argv[2], &e2, 0);
+    if (e1 == argv[1] || e2 == argv[2]) { cprintf("%s", usage); return 0; }
+
+    // 溢出检查
+    if (len > (size_t)~(physaddr_t)0 - start) {
+        cprintf("Range overflow\n");
+        return 0;
+    }
+    physaddr_t end = start + len;
+
+    physaddr_t cur = start;
+    while (cur < end) {
+        // 以页为粒度推进：限制在当前页末尾+1或end（取较小者）
+        physaddr_t page_end  = MIN((physaddr_t)ROUNDUP(cur + 1, PGSIZE), end);
+        physaddr_t page_base = (physaddr_t)ROUNDDOWN(cur, PGSIZE);
+        size_t     pfn       = (size_t)(page_base / PGSIZE);
+
+        // 判断该物理页是否在内核直映窗口内
+        if (pfn >= npages) {
+            cprintf("PA 0x%08x-0x%08x: out of direct map (unmapped)\n",
+                    (uint32_t)page_base, (uint32_t)(page_end - 1));
+            cur = page_end;
+            continue;
+        }
+
+        // 在直映窗口中：页内逐字节读取
+        for (; cur < page_end; cur++) {
+            uintptr_t kv = (uintptr_t)KADDR(cur);  // 合法：pfn < npages
+            uint8_t v    = *(uint8_t *)kv;
+            cprintf("PA 0x%08x: %02x\n", (uint32_t)cur, v);
+        }
+    }
+
+    return 0;
 }
 
 
