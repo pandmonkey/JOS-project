@@ -11,6 +11,7 @@
 #include <kern/pmap.h>
 #include <kern/trap.h>
 #include <kern/monitor.h>
+#include <kern/pmap.h>
 
 struct Env *envs = NULL;		// All environments
 struct Env *curenv = NULL;		// The current env
@@ -96,6 +97,7 @@ envid2env(envid_t envid, struct Env **env_store, bool checkperm)
 	// If checkperm is set, the specified environment
 	// must be either the current environment
 	// or an immediate child of the current environment.
+	// 可选环境检查, 只有本环境/直接子环境才允许操作, 否则返回错误
 	if (checkperm && e != curenv && e->env_parent_id != curenv->env_id) {
 		*env_store = 0;
 		return -E_BAD_ENV;
@@ -117,11 +119,25 @@ env_init(void)
 	// Set up envs array
 	// LAB 3: Your code here.
 
+	for (int i = NENV - 1; i >= 0; i--) {
+		// init envs:
+		envs[i].env_id = 0;
+		envs[i].env_status = ENV_FREE;
+
+		// insert into the env_free_list
+		envs[i].env_link = env_free_list; // 反向连接
+		env_free_list = &envs[i];
+		cprintf("set up envs ok at %d\n", i);
+	}
+
+	cprintf("set up envs ok\n");
+
 	// Per-CPU part of the initialization
 	env_init_percpu();
 }
 
 // Load GDT and segment descriptors.
+// 让 CPU 的各个 segment register 指向正确的 GDT 项, 里面的汇编代码都是在加载相关的 selector
 void
 env_init_percpu(void)
 {
@@ -146,12 +162,17 @@ env_init_percpu(void)
 // Initialize the kernel virtual memory layout for environment e.
 // Allocate a page directory, set e->env_pgdir accordingly,
 // and initialize the kernel portion of the new environment's address space.
+// 该函数只负责为 env 分配相关目录, 全是 kernel 的工作, 不去映射任何用户空间
 // Do NOT (yet) map anything into the user portion
 // of the environment's virtual address space.
 //
 // Returns 0 on success, < 0 on error.  Errors include:
 //	-E_NO_MEM if page directory or table could not be allocated.
 //
+
+// 1. allocate a page directory & set e->env_pgdir accordingly
+// 2. initialize the kernel portion of the new environment's address space
+
 static int
 env_setup_vm(struct Env *e)
 {
@@ -179,6 +200,29 @@ env_setup_vm(struct Env *e)
 	//    - The functions in kern/pmap.h are handy.
 
 	// LAB 3: Your code here.
+	e->env_pgdir = (pde_t *)page2kva(p); // allocate a page directory & set
+	p->pp_ref++;
+	// 注意 ++ 和设置 pde_t 的过程不同
+	// 注意 e->env_pgdir 保存的是 pde_t *, PageInfo 转化成 pde_t *
+	// 需要经过 page2kva!
+
+	// 将貌似 UTOP 上面的相关内容进行映射, 应该和内核等相同?
+
+	// 仿照 kern_pgdir 对 env_pgdir 的共享部分进行映射:
+	// 1. pages 元数据:
+	size_t bytes = ROUNDUP(npages * sizeof(struct PageInfo), PGSIZE) ;
+	boot_map_region(e->env_pgdir, (uintptr_t)UPAGES, bytes, PADDR(pages), PTE_U | PTE_P);
+	
+	// 2. envs array:
+	bytes = ROUNDUP(NENV * sizeof(struct Env), PGSIZE);
+	boot_map_region(e->env_pgdir, (uintptr_t)UENVS, bytes, PADDR(envs), PTE_U | PTE_P);
+
+	// 3. bootstack
+	boot_map_region(e->env_pgdir, (uintptr_t)(KSTACKTOP - KSTKSIZE), KSTKSIZE, PADDR(bootstack), PTE_W); // 一段映射即可
+
+	// 4. kernbase above
+	uint64_t kernel_map_size = (1ULL << 32) - KERNBASE;
+	boot_map_region(e->env_pgdir, KERNBASE, (size_t)(kernel_map_size), 0, PTE_W);
 
 	// UVPT maps the env's own page table read-only.
 	// Permissions: kernel R, user R
@@ -267,6 +311,16 @@ region_alloc(struct Env *e, void *va, size_t len)
 	//   'va' and 'len' values that are not page-aligned.
 	//   You should round va down, and round (va + len) up.
 	//   (Watch out for corner-cases!)
+size_t map_size = ROUNDUP((uintptr_t)va + len, PGSIZE) - ROUNDDOWN((uintptr_t)va, PGSIZE);
+
+size_t n = map_size >> PGSHIFT;
+uintptr_t start_va = ROUNDDOWN((uintptr_t)va, PGSIZE);
+for (size_t i = 0; i < n; i++) {
+	struct PageInfo* pg_info = page_alloc(ALLOC_ZERO);
+	if (!pg_info) panic("region_alloc: out of memory");
+	page_insert(e->env_pgdir, pg_info, (void *)start_va, PTE_U | PTE_W | PTE_P); // 用户与内核均可读写
+	start_va += PGSIZE;
+}
 }
 
 //
@@ -322,10 +376,38 @@ load_icode(struct Env *e, uint8_t *binary)
 	//  to make sure that the environment starts executing there.
 	//  What?  (See env_run() and env_pop_tf() below.)
 
+
 	// LAB 3: Your code here.
+	
+	struct Elf* prog_elf = (struct Elf*) binary; // 转 elf 读取文件内容
+	if(prog_elf->e_magic != ELF_MAGIC) {
+		panic("wrong elf magic");
+	}
+	struct Proghdr *ph, *eph;
+	ph = (struct Proghdr *) ((uint8_t *)prog_elf + prog_elf->e_phoff);
+	eph = ph + prog_elf->e_phnum; // end of program header
+	lcr3(PADDR(e->env_pgdir)); // 切换 cr3 在这里, 其它内核数据结构的访问并不受影响
+	for (; ph < eph; ph++) {
+		if (ph->p_type != ELF_PROG_LOAD) {
+			continue; // 不合法的直接跳
+		}
+		// 分配:
+
+		region_alloc(e, (void *)ph->p_va, ph->p_memsz);
+		// 复制粘贴: 是否需要进行 pgdirectory 的替换???
+		memcpy((void *)ph->p_va, binary + ph->p_offset, ph->p_filesz); // 粘贴文件数据
+		memset((void *)ph->p_va + ph->p_filesz, 0, ph->p_memsz - ph->p_filesz); // 初始化 .bss段
+
+	}
+	lcr3(PADDR(kern_pgdir));
+
+	// 设置入口点:
+	e->env_tf.tf_eip = prog_elf->e_entry;
+
 
 	// Now map one page for the program's initial stack
 	// at virtual address USTACKTOP - PGSIZE.
+	region_alloc(e, (void *)(USTACKTOP - PGSIZE), PGSIZE); // 分配初始 stack
 
 	// LAB 3: Your code here.
 }
@@ -341,6 +423,16 @@ void
 env_create(uint8_t *binary, enum EnvType type)
 {
 	// LAB 3: Your code here.
+	struct Env *new_env;
+	int alloc_res = env_alloc(&new_env, 0);
+	if (alloc_res == -E_NO_FREE_ENV) {
+		panic("all NENV environments are allocated\n");
+	} else if (alloc_res != 0) {
+		panic("memory exhaustion\n");
+	}
+	new_env->env_type = type;
+	load_icode(new_env, binary);
+	
 }
 
 //
@@ -457,7 +549,17 @@ env_run(struct Env *e)
 	//	e->env_tf to sensible values.
 
 	// LAB 3: Your code here.
-
-	panic("env_run not yet implemented");
+	// 1. context switch:
+	if (curenv != NULL) {
+		// 1
+		if (curenv->env_status == ENV_RUNNING) {
+		curenv->env_status = ENV_RUNNABLE;
+		}
+	}
+	curenv = e;
+	curenv->env_status = ENV_RUNNING;
+	curenv->env_runs++;
+	lcr3(PADDR(curenv->env_pgdir));
+	env_pop_tf(&curenv->env_tf); // 这部分是直接跳过用户态
 }
 

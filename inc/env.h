@@ -44,7 +44,7 @@ enum EnvType {
 };
 
 struct Env {
-	struct Trapframe env_tf;	// Saved registers
+	struct Trapframe env_tf;	// Saved registers: 当前运行环境中的 registers, 从 user -> kernel 的时候保存这些寄存器
 	struct Env *env_link;		// Next free Env
 	envid_t env_id;			// Unique environment identifier
 	envid_t env_parent_id;		// env_id of this env's parent
