@@ -58,13 +58,28 @@ static const char *trapname(int trapno)
 	return "(unknown trap)";
 }
 
+#define TH(n)  extern void handler##n(void);
+#define THE(n) TH(n)
+#include "trapentries.inc"
+#undef THE
+#undef TH
 
-void
-trap_init(void)
+#define TH(n)  [n] = handler##n,
+#define THE(n) TH(n)
+
+void (*handlers[256])(void) = {
+    #include "trapentries.inc"
+};
+
+void trap_init(void)
 {
 	extern struct Segdesc gdt[];
 
 	// LAB 3: Your code here.
+	for (int i = 0; i < 32; ++i) 
+        SETGATE(idt[i], 0, GD_KT, handlers[i], 0);
+    SETGATE(idt[T_BRKPT], 0, GD_KT, handlers[T_BRKPT], 3);
+    SETGATE(idt[T_SYSCALL], 0, GD_KT, handlers[T_SYSCALL], 3);
 
 	// Per-CPU setup 
 	trap_init_percpu();
@@ -144,6 +159,29 @@ trap_dispatch(struct Trapframe *tf)
 {
 	// Handle processor exceptions.
 	// LAB 3: Your code here.
+	switch (tf->tf_trapno)
+	{
+	case T_PGFLT:
+		page_fault_handler(tf);
+		return;
+	case T_BRKPT:
+		monitor(tf);
+		return;
+	case T_SYSCALL:
+		{
+			struct PushRegs* regs = &tf->tf_regs;
+			regs->reg_eax = syscall(
+				regs->reg_eax,
+				regs->reg_edx,
+				regs->reg_ecx,
+				regs->reg_ebx,
+				regs->reg_edi,
+				regs->reg_esi
+			);
+		return;
+		}
+		
+	}
 
 	// Unexpected trap: The user process or the kernel has a bug.
 	print_trapframe(tf);
@@ -205,6 +243,9 @@ page_fault_handler(struct Trapframe *tf)
 	// Handle kernel-mode page faults.
 
 	// LAB 3: Your code here.
+	    if ((tf->tf_cs & 3) == 0) {
+        panic("Kernel page fault va %08x ip %08x\n", fault_va, tf->tf_eip);
+    }
 
 	// We've already handled kernel-mode exceptions, so if we get here,
 	// the page fault happened in user mode.

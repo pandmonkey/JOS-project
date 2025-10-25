@@ -649,6 +649,22 @@ user_mem_check(struct Env *env, const void *va, size_t len, int perm)
 {
 	// LAB 3: Your code here.
 
+	uintptr_t start, end;
+	start = ROUNDDOWN((uintptr_t)va, PGSIZE);
+	end = ROUNDUP((uintptr_t)va + len, PGSIZE); // 找到范围
+	// below ULIM:
+	if (end >= ULIM) {
+		user_mem_check_addr = MAX(ULIM, (uintptr_t)va); // 第一个出错的只可能出现在这两个之间
+		return -E_FAULT;
+	}
+
+	for (; start < end; start += PGSIZE) {
+		pte_t* pte = pgdir_walk(env->env_pgdir, (const void *)start, 0);
+		if (!pte || (((*pte) & (perm | PTE_P)) != (perm | PTE_P))) {
+			user_mem_check_addr = MAX(start, (uintptr_t)va); // 要么一开始错, 要么中间错的
+			return -E_FAULT;
+		}
+	}
 	return 0;
 }
 

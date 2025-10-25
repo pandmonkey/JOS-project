@@ -20,6 +20,8 @@
  *   void NAME();
  * where NAME is the argument passed to TRAPHANDLER.
  */
+
+
 #define TRAPHANDLER(name, num)						\
 	.globl name;		/* define global symbol for 'name' */	\
 	.type name, @function;	/* symbol type is function */		\
@@ -34,7 +36,7 @@
  */
 #define TRAPHANDLER_NOEC(name, num)					\
 	.globl name;							\
-	.type name, @function;						\
+	.type name, @function;					\
 	.align 2;							\
 	name:								\
 	pushl $0;							\
@@ -46,6 +48,18 @@
 /*
  * Lab 3: Your code here for generating entry points for the different traps.
  */
+// 0~19: 处理器异常
+
+
+#define TH(n)  TRAPHANDLER_NOEC(handler##n, n)
+#define THE(n) TRAPHANDLER(handler##n, n)
+
+.text
+#include "trapentries.inc"
+
+
+
+
 
 
 
@@ -53,3 +67,20 @@
  * Lab 3: Your code here for _alltraps
  */
 
+
+_alltraps:
+	pushl %ds // ds
+	pushl %es // es
+	pushal // tf_regs
+
+	// 将 CS ds 和 es 都指向内核态的 selector 这是要求
+	mov $GD_KD, %ax
+	mov %ax, %ds
+	mov %ax, %es
+
+	push %esp
+	// 对于  x86-32 调用约定是用 stack 传递参数而不是 esp , 这和 15-213 不同
+	call trap
+trap_spin:
+	jmp trap_spin // 此处不返回: reason:
+	// 所以要陷入死循环

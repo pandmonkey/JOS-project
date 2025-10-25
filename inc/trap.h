@@ -56,21 +56,22 @@ struct PushRegs {
 } __attribute__((packed));
 
 struct Trapframe {
-	struct PushRegs tf_regs;
+	// 压栈顺序 从下向上压
+	struct PushRegs tf_regs; // 从 trapno 到 tf_regs 是需要自己进行压入的
 	uint16_t tf_es;
 	uint16_t tf_padding1;
 	uint16_t tf_ds;
 	uint16_t tf_padding2;
 	uint32_t tf_trapno;
-	/* below here defined by x86 hardware */
-	uint32_t tf_err;
-	uintptr_t tf_eip;
-	uint16_t tf_cs;
-	uint16_t tf_padding3;
-	uint32_t tf_eflags;
+	/* below here defined by x86 hardware */ // 核心意思, 下面的内容 全 部 都 是 CPU 自动压入, 后面的代码编写不用管它
+	uint32_t tf_err; // err code : 对于没有压入 err code 的, 需要补充压入, 以保证 Trapframe 的完整性
+	uintptr_t tf_eip; //eip
+	uint16_t tf_cs; // cs
+	uint16_t tf_padding3; 
+	uint32_t tf_eflags; // eflags
 	/* below here only when crossing rings, such as from user to kernel */
-	uintptr_t tf_esp;
-	uint16_t tf_ss;
+	uintptr_t tf_esp; // esp
+	uint16_t tf_ss; // ss 
 	uint16_t tf_padding4;
 } __attribute__((packed));
 
