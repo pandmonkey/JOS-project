@@ -58,11 +58,6 @@
 #include "trapentries.inc"
 
 
-
-
-
-
-
 /*
  * Lab 3: Your code here for _alltraps
  */
@@ -76,7 +71,7 @@ _alltraps:
 	// 将 CS ds 和 es 都指向内核态的 selector 这是要求
 	mov $GD_KD, %ax
 	mov %ax, %ds
-	mov %ax, %es
+	mov %ax, %es 
 
 	push %esp
 	// 对于  x86-32 调用约定是用 stack 传递参数而不是 esp , 这和 15-213 不同

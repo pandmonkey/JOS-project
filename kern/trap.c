@@ -67,7 +67,7 @@ static const char *trapname(int trapno)
 #define TH(n)  [n] = handler##n,
 #define THE(n) TH(n)
 
-void (*handlers[256])(void) = {
+void (*interruptHandlers[256])(void) = {
     #include "trapentries.inc"
 };
 
@@ -77,9 +77,9 @@ void trap_init(void)
 
 	// LAB 3: Your code here.
 	for (int i = 0; i < 32; ++i) 
-        SETGATE(idt[i], 0, GD_KT, handlers[i], 0);
-    SETGATE(idt[T_BRKPT], 0, GD_KT, handlers[T_BRKPT], 3);
-    SETGATE(idt[T_SYSCALL], 0, GD_KT, handlers[T_SYSCALL], 3);
+        SETGATE(idt[i], 0, GD_KT, interruptHandlers[i], 0);
+    SETGATE(idt[T_BRKPT], 0, GD_KT, interruptHandlers[T_BRKPT], 3);
+    SETGATE(idt[T_SYSCALL], 0, GD_KT, interruptHandlers[T_SYSCALL], 3);
 
 	// Per-CPU setup 
 	trap_init_percpu();
