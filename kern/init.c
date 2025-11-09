@@ -73,6 +73,7 @@ i386_init(void)
 void *mpentry_kstack;
 
 // Start the non-boot (AP) processors.
+// 逐个启动所有非引导处理器, 让每个AP从指定的入口代码开始执行, 等待它们完成初始化
 static void
 boot_aps(void)
 {

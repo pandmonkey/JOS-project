@@ -130,10 +130,10 @@ env_init(void)
 		// insert into the env_free_list
 		envs[i].env_link = env_free_list; // 反向连接
 		env_free_list = &envs[i];
-		cprintf("set up envs ok at %d\n", i);
+		// cprintf("set up envs ok at %d\n", i);
 	}
 
-	cprintf("set up envs ok\n");
+	// cprintf("set up envs ok\n");
 
 	// Per-CPU part of the initialization
 	env_init_percpu();

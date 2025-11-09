@@ -42,8 +42,21 @@
 #define TCCR    (0x0390/4)   // Timer Current Count
 #define TDCR    (0x03E0/4)   // Timer Divide Configuration
 
-physaddr_t lapicaddr;        // Initialized in mpconfig.c
-volatile uint32_t *lapic;
+/*
+ * 本文件实现了本地 APIC（Local Advanced Programmable Interrupt Controller）的初始化和操作接口。
+ * 在多核系统中，每个 CPU 都有自己的 LAPIC，用于管理本地中断、定时器中断，以及处理器间中断（IPI）。
+ * 主要功能包括：
+ *   - 初始化 LAPIC 并配置定时器和中断向量（lapic_init）
+ *   - 向 LAPIC 发送 EOI 信号，通知中断处理完成（lapic_eoi）
+ *   - 启动其他处理器（AP），实现多核启动（lapic_startap）
+ *   - 发送 IPI，实现多核间通信（lapic_ipi）
+ * lapicaddr 保存 LAPIC 的物理地址，lapic 指向其虚拟地址，便于内核直接访问硬件寄存器。
+ * 这些接口为多核系统的中断管理和 CPU 间协作提供了底层支持。
+ */
+
+physaddr_t lapicaddr;	// LAPIC的物理地址, 在 mpconfig.c 进行初始化
+        // Initialized in mpconfig.c
+volatile uint32_t *lapic; // 指向 LAPIC MMIO 区域的虚拟地址
 
 static void
 lapicw(int index, int value)
@@ -125,8 +138,10 @@ lapic_eoi(void)
 {
 	if (lapic)
 		lapicw(EOI, 0);
-}
+} // 向 LAPIC 发送 EOI 信号, 表示当前中断已经处理完毕
 
+
+// 空函数, 预留用于微妙级延迟
 // Spin for a given number of microseconds.
 // On real hardware would want to tune this dynamically.
 static void
@@ -136,6 +151,7 @@ microdelay(int us)
 
 #define IO_RTC  0x70
 
+// 启动一个新的 AP
 // Start additional processor running entry code at addr.
 // See Appendix B of MultiProcessor Specification.
 void

@@ -275,6 +275,7 @@ mem_init(void)
 
 	uint64_t kernel_map_size = (1ULL << 32) - KERNBASE;
 	boot_map_region(kern_pgdir, KERNBASE, (size_t)(kernel_map_size), 0, PTE_W);
+	mem_init_mp();
 
 	// Check that the initial page directory has been set up correctly.
 	check_kern_pgdir();
@@ -323,6 +324,11 @@ mem_init_mp(void)
 	//     Permissions: kernel RW, user NONE
 	//
 	// LAB 4: Your code here:
+	
+	for (int i = 0; i < NCPU; i++) {
+		size_t kstackstop_i = KSTACKTOP - i * (KSTKSIZE + KSTKGAP);
+		boot_map_region(kern_pgdir, (uintptr_t)(kstackstop_i - KSTKSIZE), KSTKSIZE, PADDR(percpu_kstacks[i]), PTE_P | PTE_W);
+	}
 
 }
 
@@ -344,7 +350,7 @@ page_init(void)
 	// LAB 4:
 	// Change your code to mark the physical page at MPENTRY_PADDR
 	// as in use
-
+	mark_use(MPENTRY_PADDR >> PGSHIFT);
 	// The example code here marks all physical pages as free.
 	// However this is not truly the case.  What memory is free?
 	//  1) Mark physical page 0 as in use.
@@ -369,6 +375,9 @@ page_init(void)
 
 	// rest of the base memory is free:
 	for (i = 1; i < npages_basemem; i++) {
+		if (i == MPENTRY_PADDR >> PGSHIFT) {
+			continue;
+		} // 跳过中间加进来的分配
 		mark_free(i);
 	}
 
@@ -687,7 +696,16 @@ mmio_map_region(physaddr_t pa, size_t size)
 	// Hint: The staff solution uses boot_map_region.
 	//
 	// Your code here:
-	panic("mmio_map_region not implemented");
+	size_t bytes = ROUNDUP(size, PGSIZE);
+	if (base + bytes > MMIOLIM) {
+        panic("mmio_map_region: MMIO region overflow");
+	}
+	// 建立映射
+	boot_map_region(kern_pgdir, (uintptr_t)base, bytes, pa, PTE_PCD | PTE_PWT | PTE_W);
+	// 保存返回值 
+	void* ret = (void *)base;
+	base += bytes;
+	return ret;
 }
 
 static uintptr_t user_mem_check_addr;

@@ -120,24 +120,31 @@ trap_init_percpu(void)
 	// user space on that CPU.
 	//
 	// LAB 4: Your code here:
+    // 1. 获取当前 CPU 的编号
+    int id = cpunum();
 
-	// Setup a TSS so that we get the right stack
-	// when we trap to the kernel.
-	ts.ts_esp0 = KSTACKTOP;
-	ts.ts_ss0 = GD_KD;
-	ts.ts_iomb = sizeof(struct Taskstate);
+    // 2. 获取当前 CPU 的 CpuInfo 结构体指针
+    struct CpuInfo *c = &cpus[id];
 
-	// Initialize the TSS slot of the gdt.
-	gdt[GD_TSS0 >> 3] = SEG16(STS_T32A, (uint32_t) (&ts),
-					sizeof(struct Taskstate) - 1, 0);
-	gdt[GD_TSS0 >> 3].sd_s = 0;
+    // 3. 设置当前 CPU 的 TSS（任务状态段）
+    // ts_esp0 设为该 CPU 的内核栈顶
+    c->cpu_ts.ts_esp0 = KSTACKTOP - id * (KSTKSIZE + KSTKGAP);
+    // ts_ss0 设为内核数据段选择子
+    c->cpu_ts.ts_ss0 = GD_KD;
+    // ts_iomb 设为 TSS 结构体大小，禁止用户环境进行 IO
+    c->cpu_ts.ts_iomb = sizeof(struct Taskstate);
 
-	// Load the TSS selector (like other segment selectors, the
-	// bottom three bits are special; we leave them 0)
-	ltr(GD_TSS0);
+    // 4. 在 GDT 中为当前 CPU 设置 TSS 描述符
+    // 每个 CPU 的 TSS 描述符放在 gdt[(GD_TSS0 >> 3) + id]
+    gdt[(GD_TSS0 >> 3) + id] = SEG16(STS_T32A, (uint32_t) (&c->cpu_ts), sizeof(struct Taskstate) - 1, 0);
+    gdt[(GD_TSS0 >> 3) + id].sd_s = 0; // 系统段
 
-	// Load the IDT
-	lidt(&idt_pd);
+    // 5. 加载当前 CPU 的 TSS 选择子
+    // 选择子为 GD_TSS0 + (id << 3)
+    ltr(GD_TSS0 + (id << 3));
+
+    // 6. 加载 IDT
+    lidt(&idt_pd);
 }
 
 void
