@@ -2,11 +2,12 @@
 
 #include <inc/string.h>
 #include <inc/lib.h>
-
+#include <inc/memlayout.h>
 // PTE_COW marks copy-on-write page table entries.
 // It is one of the bits explicitly allocated to user processes (PTE_AVAIL).
 #define PTE_COW		0x800
 
+extern void _pgfault_upcall(void);
 //
 // Custom page fault handler - if faulting page is copy-on-write,
 // map in our own private writable copy.
@@ -14,27 +15,27 @@
 static void
 pgfault(struct UTrapframe *utf)
 {
-	void *addr = (void *) utf->utf_fault_va;
-	uint32_t err = utf->utf_err;
-	int r;
+    void *addr = (void*) ROUNDDOWN(utf->utf_fault_va, PGSIZE);
+    uint32_t err = utf->utf_err;
+    int r;
 
-	// Check that the faulting access was (1) a write, and (2) to a
-	// copy-on-write page.  If not, panic.
-	// Hint:
-	//   Use the read-only page table mappings at uvpt
-	//   (see <inc/memlayout.h>).
+    // 必须是写缺页 + 该页是 COW
+    if (!( (err & FEC_WR) &&
+           (uvpd[PDX(addr)] & PTE_P) &&
+           (uvpt[PGNUM(addr)] & PTE_P) &&
+           (uvpt[PGNUM(addr)] & PTE_U) &&
+           (uvpt[PGNUM(addr)] & PTE_COW) )) {
+        panic("pgfault: not a COW write fault va=%08x err=%x", utf->utf_fault_va, err);
+    }
 
-	// LAB 4: Your code here.
-
-	// Allocate a new page, map it at a temporary location (PFTEMP),
-	// copy the data from the old page to the new page, then move the new
-	// page to the old page's address.
-	// Hint:
-	//   You should make three system calls.
-
-	// LAB 4: Your code here.
-
-	panic("pgfault not implemented");
+    // 分配临时页，复制，再替换
+    if ((r = sys_page_alloc(0, (void*)PFTEMP, PTE_U|PTE_P|PTE_W)) < 0)
+        panic("pgfault alloc: %e", r);
+    memmove((void*)PFTEMP, addr, PGSIZE);
+    if ((r = sys_page_map(0, (void*)PFTEMP, 0, addr, PTE_U|PTE_P|PTE_W)) < 0)
+        panic("pgfault map: %e", r);
+    if ((r = sys_page_unmap(0, (void*)PFTEMP)) < 0)
+        panic("pgfault unmap temp: %e", r);
 }
 
 //
@@ -51,11 +52,29 @@ pgfault(struct UTrapframe *utf)
 static int
 duppage(envid_t envid, unsigned pn)
 {
-	int r;
+    int r;
+    void *va = (void*)(pn * PGSIZE);
+    pte_t pte = uvpt[pn];
 
-	// LAB 4: Your code here.
-	panic("duppage not implemented");
-	return 0;
+    // 共享页直接保持原权限
+    if (pte & PTE_SHARE) {
+        return sys_page_map(0, va, envid, va, pte & PTE_SYSCALL);
+    }
+
+    if ((pte & PTE_W) || (pte & PTE_COW)) {
+        // 设为 COW（去掉写位，双方都 COW）
+        pte_t perm = PTE_U | PTE_P | PTE_COW;
+        if ((r = sys_page_map(0, va, envid, va, perm)) < 0)
+            return r;
+        if ((r = sys_page_map(0, va, 0, va, perm)) < 0)
+            return r;
+    } else {
+        // 只读页直接映射
+        pte_t perm = PTE_U | PTE_P;
+        if ((r = sys_page_map(0, va, envid, va, perm)) < 0)
+            return r;
+    }
+    return 0;
 }
 
 //
@@ -77,10 +96,50 @@ duppage(envid_t envid, unsigned pn)
 envid_t
 fork(void)
 {
-	// LAB 4: Your code here.
-	panic("fork not implemented");
-}
+    envid_t child;
+    int r;
 
+    set_pgfault_handler(pgfault);
+
+    child = sys_exofork();
+    if (child < 0)
+        panic("fork: %e", child);
+
+    if (child == 0) {
+        // 子进程路径
+        thisenv = &envs[ENVX(sys_getenvid())];
+        return 0;
+    }
+
+    // 父进程：复制所有低于 UTOP 的用户页，跳过用户异常栈页
+    for (uintptr_t va = 0; va < UTOP; va += PGSIZE) {
+        // 跳过异常栈页
+        if (va >= (UXSTACKTOP - PGSIZE) && va < UXSTACKTOP)
+            continue;
+        // PDE 不在或 PTE 不在
+        if (!(uvpd[PDX(va)] & PTE_P))
+            continue;
+        pte_t pte = uvpt[PGNUM(va)];
+        if (!(pte & PTE_P) || !(pte & PTE_U))
+            continue;
+        if ((r = duppage(child, PGNUM(va))) < 0)
+            panic("fork duppage va=%08x: %e", va, r);
+    }
+
+    // 分配子进程的异常栈
+    if ((r = sys_page_alloc(child, (void*)(UXSTACKTOP - PGSIZE), PTE_U|PTE_P|PTE_W)) < 0)
+        panic("fork uxstack alloc: %e", r);
+
+    // 注册 upcall
+    if ((r = sys_env_set_pgfault_upcall(child, _pgfault_upcall)) < 0)
+        panic("fork set upcall: %e", r);
+
+    // 置为可运行
+    if ((r = sys_env_set_status(child, ENV_RUNNABLE)) < 0)
+        panic("fork set status: %e", r);
+
+    return child;
+}
 // Challenge!
 int
 sfork(void)

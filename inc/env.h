@@ -65,6 +65,17 @@ struct Env {
 	uint32_t env_ipc_value;		// Data value sent to us
 	envid_t env_ipc_from;		// envid of the sender
 	int env_ipc_perm;		// Perm of page mapping received
+
+	
+	    // Sleep IPC: receiver 端的等待发送者队列（单链表头）
+    struct Env *env_ipc_sendq;
+    // Sleep IPC: 作为发送者时挂到对方队列的 next 指针
+    struct Env *env_ipc_next;
+
+    // Sleep IPC: 发送者睡眠时保存发送参数
+    uint32_t    env_ipc_snd_val;
+    void       *env_ipc_snd_va;
+    unsigned    env_ipc_snd_perm;
 };
 
 #endif // !JOS_INC_ENV_H

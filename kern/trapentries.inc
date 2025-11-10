@@ -17,3 +17,10 @@ THE(17)
 TH(18)
 TH(19)
 TH(48)
+TH(32)  
+TH(33)   
+
+TH(36) // SERIAL
+TH(39) // SPURIOUS
+TH(46) // IDE
+TH(51) // ERROR

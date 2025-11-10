@@ -26,11 +26,18 @@ set_pgfault_handler(void (*handler)(struct UTrapframe *utf))
 {
 	int r;
 
-	if (_pgfault_handler == 0) {
-		// First time through!
-		// LAB 4: Your code here.
-		panic("set_pgfault_handler not implemented");
-	}
+    // 如果还没有注册过 handler，说明是第一次
+    if (_pgfault_handler == 0) {
+        // 1. 分配一页异常栈，栈顶是 UXSTACKTOP
+        r = sys_page_alloc(0, (void*)(UXSTACKTOP - PGSIZE), PTE_P | PTE_U | PTE_W);
+        if (r < 0)
+            panic("set_pgfault_handler: sys_page_alloc failed: %e", r);
+
+        // 2. 告诉内核以后页错误时跳到 _pgfault_upcall
+        r = sys_env_set_pgfault_upcall(0, _pgfault_upcall);
+        if (r < 0)
+            panic("set_pgfault_handler: sys_env_set_pgfault_upcall failed: %e", r);
+    }
 
 	// Save handler pointer for assembly to call.
 	_pgfault_handler = handler;

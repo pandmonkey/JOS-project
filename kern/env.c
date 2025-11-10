@@ -212,24 +212,11 @@ env_setup_vm(struct Env *e)
 	// 将貌似 UTOP 上面的相关内容进行映射, 应该和内核等相同?
 
 	// 仿照 kern_pgdir 对 env_pgdir 的共享部分进行映射:
-	// 1. pages 元数据:
-	size_t bytes = ROUNDUP(npages * sizeof(struct PageInfo), PGSIZE) ;
-	boot_map_region(e->env_pgdir, (uintptr_t)UPAGES, bytes, PADDR(pages), PTE_U | PTE_P);
-	
-	// 2. envs array:
-	bytes = ROUNDUP(NENV * sizeof(struct Env), PGSIZE);
-	boot_map_region(e->env_pgdir, (uintptr_t)UENVS, bytes, PADDR(envs), PTE_U | PTE_P);
-
-	// 3. bootstack
-	boot_map_region(e->env_pgdir, (uintptr_t)(KSTACKTOP - KSTKSIZE), KSTKSIZE, PADDR(bootstack), PTE_W); // 一段映射即可
-
-	// 4. kernbase above
-	uint64_t kernel_map_size = (1ULL << 32) - KERNBASE;
-	boot_map_region(e->env_pgdir, KERNBASE, (size_t)(kernel_map_size), 0, PTE_W);
-
-	// UVPT maps the env's own page table read-only.
-	// Permissions: kernel R, user R
-	e->env_pgdir[PDX(UVPT)] = PADDR(e->env_pgdir) | PTE_P | PTE_U;
+    for (size_t i = PDX(UTOP); i < NPDENTRIES; ++i)
+        e->env_pgdir[i] = kern_pgdir[i];
+    // UVPT maps the env's own page table read-only.
+    // Permissions: kernel R, user R
+    e->env_pgdir[PDX(UVPT)] = PADDR(e->env_pgdir) | PTE_P | PTE_U;
 
 	return 0;
 }
@@ -268,6 +255,14 @@ env_alloc(struct Env **newenv_store, envid_t parent_id)
 	e->env_status = ENV_RUNNABLE;
 	e->env_runs = 0;
 
+
+	e->env_ipc_recving = 0;
+    e->env_ipc_sendq = NULL;
+    e->env_ipc_next = NULL;
+    e->env_ipc_snd_val = 0;
+    e->env_ipc_snd_va = NULL;
+    e->env_ipc_snd_perm = 0;
+
 	// Clear out all the saved register state,
 	// to prevent the register values
 	// of a prior environment inhabiting this Env structure
@@ -291,7 +286,7 @@ env_alloc(struct Env **newenv_store, envid_t parent_id)
 
 	// Enable interrupts while in user mode.
 	// LAB 4: Your code here.
-
+	e->env_tf.tf_eflags |= FL_IF;
 	// Clear the page fault handler until user installs one.
 	e->env_pgfault_upcall = 0;
 
@@ -586,6 +581,7 @@ env_run(struct Env *e)
 	curenv->env_status = ENV_RUNNING;
 	curenv->env_runs++;
 	lcr3(PADDR(curenv->env_pgdir));
+	unlock_kernel();
 	env_pop_tf(&curenv->env_tf); // 这部分是直接跳过用户态
 }
 

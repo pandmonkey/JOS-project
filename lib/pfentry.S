@@ -37,6 +37,8 @@ _pgfault_upcall:
 	movl _pgfault_handler, %eax
 	call *%eax
 	addl $4, %esp			// pop function argument
+	// 这部分内容调用了 handler
+	// 执行完错误处理函数后, 程序还在异常栈上, 寄存器等状态还没有恢复
 	
 	// Now the C page fault handler has returned and you must return
 	// to the trap time state.
@@ -65,18 +67,31 @@ _pgfault_upcall:
 	// ways as registers become unavailable as scratch space.
 	//
 	// LAB 4: Your code here.
+	// 结束后 handler 返回, 需要恢复 trap-time 的寄存器和状态
 
+		movl 48(%esp), %eax
+		movl 40(%esp), %ebx
+		subl $4, %eax
+		movl %ebx, (%eax)
+		movl %eax, 48(%esp)
+		// 准备恢复到出错前的相关状态
 	// Restore the trap-time registers.  After you do this, you
 	// can no longer modify any general-purpose registers.
 	// LAB 4: Your code here.
+		addl $8, %esp
+    	popal // 恢复所有通用寄存器-> 先跳过 fault_va 和 errcode, 然后直接重建环境中的寄存器内容
 
 	// Restore eflags from the stack.  After you do this, you can
 	// no longer use arithmetic operations or anything else that
 	// modifies eflags.
 	// LAB 4: Your code here.
+	    addl $4, %esp 
+    	popf // 恢复 eflages
 
 	// Switch back to the adjusted trap-time stack.
 	// LAB 4: Your code here.
+		movl (%esp), %esp // 切换回 trap-time esp
 
 	// Return to re-execute the instruction that faulted.
 	// LAB 4: Your code here.
+		ret

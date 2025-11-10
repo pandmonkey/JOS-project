@@ -12,6 +12,20 @@
 #include <kern/console.h>
 #include <kern/sched.h>
 
+
+// 用于检查 地址的 marco
+// 检查虚拟地址的对齐性, 看是否成立
+#define CHECK_ALIGIN_UVA(_va) do {\
+	uintptr_t __tmp__ = (uintptr_t)(_va);\
+	if (__tmp__>= UTOP || (__tmp__ & (PGSIZE - 1)))\
+		return -E_INVAL;\
+} while(0)
+// 检查权限的情况
+#define CHECK_SYSCALL_PERM(_perm) do {\
+	int __tmp__ = perm; \
+	if (!(__tmp__ & PTE_P) || !(__tmp__ & PTE_U) || (__tmp__ & ~PTE_SYSCALL))\
+	return -E_INVAL;\
+} while(0)
 // Print a string to the system console.
 // The string is exactly 'len' characters long.
 // Destroys the environment on memory errors.
@@ -84,7 +98,19 @@ sys_exofork(void)
 	// will appear to return 0.
 
 	// LAB 4: Your code here.
-	panic("sys_exofork not implemented");
+	int allocated = 0;
+	struct Env *p, *c;
+	p = curenv;
+	allocated = env_alloc(&c, p->env_id);
+	if (allocated < 0) {
+		return allocated;
+	}
+
+	c->env_status = ENV_NOT_RUNNABLE;
+	c->env_tf = p->env_tf;
+	c->env_tf.tf_regs.reg_eax = 0; // 模拟 Unix 的 fork()的返回值语义, 父进程中 fork()返回新子进程的 envid, 子进程中, fork()返回0
+	return c->env_id;
+	
 }
 
 // Set envid's env_status to status, which must be ENV_RUNNABLE
@@ -97,14 +123,16 @@ sys_exofork(void)
 static int
 sys_env_set_status(envid_t envid, int status)
 {
-	// Hint: Use the 'envid2env' function from kern/env.c to translate an
-	// envid to a struct Env.
-	// You should set envid2env's third argument to 1, which will
-	// check whether the current environment has permission to set
-	// envid's status.
+    struct Env *e;
+    if (!(status == ENV_RUNNABLE || status == ENV_NOT_RUNNABLE))
+        return -E_INVAL;
 
-	// LAB 4: Your code here.
-	panic("sys_env_set_status not implemented");
+    int r = envid2env(envid, &e, 1);
+    if (r < 0)
+        return r;
+
+    e->env_status = status;
+    return 0;
 }
 
 // Set the page fault upcall for 'envid' by modifying the corresponding struct
@@ -115,11 +143,18 @@ sys_env_set_status(envid_t envid, int status)
 // Returns 0 on success, < 0 on error.  Errors are:
 //	-E_BAD_ENV if environment envid doesn't currently exist,
 //		or the caller doesn't have permission to change envid.
+// 为环境注册应该页错误处理函数 
+// func 保存了页错误处理函数的入口地址
 static int
 sys_env_set_pgfault_upcall(envid_t envid, void *func)
 {
-	// LAB 4: Your code here.
-	panic("sys_env_set_pgfault_upcall not implemented");
+	struct Env *e;
+	int r = envid2env(envid, &e, 1);
+	if (r < 0)
+		return r;
+	e->env_pgfault_upcall = func;
+	return 0;
+
 }
 
 // Allocate a page of memory and map it at 'va' with permission
@@ -147,9 +182,27 @@ sys_page_alloc(envid_t envid, void *va, int perm)
 	//   parameters for correctness.
 	//   If page_insert() fails, remember to free the page you
 	//   allocated!
+	int called;
+	struct Env *e;
+	struct PageInfo *pp;
 
+	CHECK_ALIGIN_UVA(va);
+	CHECK_SYSCALL_PERM(perm); //检查输入情况
+	called = envid2env(envid, &e, 1);
+	if (called < 0) {
+		return called;
+	}
+	pp = page_alloc(ALLOC_ZERO);
+	if (!pp) {
+		return -E_NO_MEM; // 分配失败
+	}
+	called = page_insert(e->env_pgdir, pp, va, perm); // 映射构造失败
+	if (called < 0) {
+		page_free(pp);
+		return called;
+	}
+	return 0;
 	// LAB 4: Your code here.
-	panic("sys_page_alloc not implemented");
 }
 
 // Map the page of memory at 'srcva' in srcenvid's address space
@@ -178,9 +231,38 @@ sys_page_map(envid_t srcenvid, void *srcva,
 	//   parameters for correctness.
 	//   Use the third argument to page_lookup() to
 	//   check the current permissions on the page.
+	int r;
+	struct Env *srcenv, *dstenv;
+	pte_t *pte;
+	struct PageInfo *pp;
 
+	CHECK_ALIGIN_UVA(srcva);
+	CHECK_ALIGIN_UVA(dstva);
+	CHECK_SYSCALL_PERM(perm);
+	r = envid2env(srcenvid, &srcenv, 1);
+	if (r < 0) {
+		return r;
+	}
+
+	r = envid2env(dstenvid, &dstenv, 1);
+	if (r < 0) {
+		return r;
+	}
+
+	if (!(pp = page_lookup(srcenv->env_pgdir, srcva, &pte))) {
+		return -E_INVAL;
+	}
+
+	if (!(*pte & PTE_W) && (perm & PTE_W)) {
+		return -E_INVAL;
+	}
+
+	r = page_insert(dstenv->env_pgdir, pp, dstva, perm);
+	if (r < 0) {
+		return r;
+	}
+	return 0;
 	// LAB 4: Your code here.
-	panic("sys_page_map not implemented");
 }
 
 // Unmap the page of memory at 'va' in the address space of 'envid'.
@@ -194,9 +276,16 @@ static int
 sys_page_unmap(envid_t envid, void *va)
 {
 	// Hint: This function is a wrapper around page_remove().
+	int r;
+	struct Env *e;
+	CHECK_ALIGIN_UVA(va);
+	r = envid2env(envid, &e, 1);
+	if (r < 0) {
+		return r;
+	}
 
-	// LAB 4: Your code here.
-	panic("sys_page_unmap not implemented");
+	page_remove(e->env_pgdir, va);
+	return 0;
 }
 
 // Try to send 'value' to the target env 'envid'.
@@ -237,11 +326,54 @@ sys_page_unmap(envid_t envid, void *va)
 //		current environment's address space.
 //	-E_NO_MEM if there's not enough memory to map srcva in envid's
 //		address space.
+
 static int
 sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)
 {
-	// LAB 4: Your code here.
-	panic("sys_ipc_try_send not implemented");
+    int r;
+    struct Env *dst;
+
+    if ((r = envid2env(envid, &dst, 0)) < 0)
+        return r;
+
+    // 目标必须在接收中
+    if (!dst->env_ipc_recving || dst->env_status != ENV_NOT_RUNNABLE)
+        return -E_IPC_NOT_RECV;
+
+    // 是否要传页
+    if (srcva < (void*)UTOP) {
+        if ((uintptr_t)srcva & (PGSIZE - 1))
+            return -E_INVAL;
+        if (perm & ~PTE_SYSCALL)
+            return -E_INVAL;
+        if (!(perm & PTE_U) || !(perm & PTE_P))
+            return -E_INVAL;
+
+        pte_t *pte;
+        struct PageInfo *pp = page_lookup(curenv->env_pgdir, srcva, &pte);
+        if (!pp)
+            return -E_INVAL;
+        if ((perm & PTE_W) && !(*pte & PTE_W))
+            return -E_INVAL;
+
+        // 如果接收方愿意接收页（dstva < UTOP）
+        if (dst->env_ipc_dstva < (void*)UTOP) {
+            if ((r = page_insert(dst->env_pgdir, pp, dst->env_ipc_dstva, perm)) < 0)
+                return r;
+            dst->env_ipc_perm = perm;
+        } else {
+            dst->env_ipc_perm = 0;
+        }
+    } else {
+        dst->env_ipc_perm = 0;
+    }
+
+    dst->env_ipc_recving = 0;
+    dst->env_ipc_from    = curenv->env_id;
+    dst->env_ipc_value   = value;
+    dst->env_status      = ENV_RUNNABLE;
+    dst->env_tf.tf_regs.reg_eax = 0;
+    return 0;
 }
 
 // Block until a value is ready.  Record that you want to receive
@@ -258,40 +390,52 @@ sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)
 static int
 sys_ipc_recv(void *dstva)
 {
-	// LAB 4: Your code here.
-	panic("sys_ipc_recv not implemented");
-	return 0;
+    if (dstva < (void*)UTOP && ((uintptr_t)dstva & (PGSIZE - 1)))
+        return -E_INVAL;
+
+    curenv->env_ipc_recving = 1;
+    curenv->env_ipc_dstva   = dstva;
+    curenv->env_status      = ENV_NOT_RUNNABLE;
+    sched_yield();
+    return 0; // 不会真的到这里（只有错误才返回）
 }
 
 // Dispatches to the correct kernel function, passing the arguments.
 int32_t
 syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5)
 {
-	// Call the function corresponding to the 'syscallno' parameter.
-	// Return any appropriate return value.
-	switch (syscallno) {
-	case SYS_cputs:
-	{
-		sys_cputs((const char*)a1, (size_t)a2);
-		return 0;
-	}
-
-	case SYS_cgetc:
-	{
-		return sys_cgetc();
-	}
-
-	case SYS_getenvid:
-	{
-		return sys_getenvid();
-	}
-
-	case SYS_env_destroy:
-	{
-		return sys_env_destroy((envid_t)a1);
-	}
-	default:
-		return -E_INVAL;
-	}
+    switch (syscallno) {
+    case SYS_cputs:
+        sys_cputs((const char*)a1, (size_t)a2);
+        return 0;
+    case SYS_cgetc:
+        return sys_cgetc();
+    case SYS_getenvid:
+        return sys_getenvid();
+    case SYS_env_destroy:
+        return sys_env_destroy((envid_t)a1);
+    case SYS_yield:
+        sys_yield();
+        return 0;
+    case SYS_exofork:
+        return sys_exofork();
+    case SYS_env_set_status:
+        return sys_env_set_status((envid_t)a1, (int)a2);
+    case SYS_page_alloc:
+        return sys_page_alloc((envid_t)a1, (void*)a2, (int)a3);
+    case SYS_page_map:
+        return sys_page_map((envid_t)a1, (void*)a2,
+                            (envid_t)a3, (void*)a4, (int)a5);
+    case SYS_page_unmap:
+        return sys_page_unmap((envid_t)a1, (void*)a2);
+	case SYS_env_set_pgfault_upcall:
+	return sys_env_set_pgfault_upcall((envid_t)a1, (void*)a2);
+	case SYS_ipc_try_send:
+	return sys_ipc_try_send((envid_t)a1, a2, (void*)a3, (unsigned)a4);
+    case SYS_ipc_recv:
+        return sys_ipc_recv((void*)a1);
+    default:
+        return -E_INVAL;
+    }
 }
 

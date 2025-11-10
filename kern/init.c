@@ -51,7 +51,7 @@ i386_init(void)
 
 	// Acquire the big kernel lock before waking up APs
 	// Your code here:
-
+	lock_kernel();
 	// Starting non-boot CPUs
 	boot_aps();
 
@@ -61,6 +61,9 @@ i386_init(void)
 #else
 	// Touch all you want.
 	ENV_CREATE(user_primes, ENV_TYPE_USER);
+	ENV_CREATE(user_yield, ENV_TYPE_USER);
+	ENV_CREATE(user_yield, ENV_TYPE_USER);
+	ENV_CREATE(user_yield, ENV_TYPE_USER);
 #endif // TEST*
 
 	// Schedule and run the first user environment!
@@ -73,7 +76,7 @@ i386_init(void)
 void *mpentry_kstack;
 
 // Start the non-boot (AP) processors.
-// 逐个启动所有非引导处理器, 让每个AP从指定的入口代码开始执行, 等待它们完成初始化
+// 逐个启动所有非引导处理器, 让每个AP从指定的入口代码开始执行, 等待它们完成mp初始化
 static void
 boot_aps(void)
 {
@@ -118,7 +121,8 @@ mp_main(void)
 	// only one CPU can enter the scheduler at a time!
 	//
 	// Your code here:
-
+	lock_kernel();
+	sched_yield(); // 开始调度
 	// Remove this after you finish Exercise 6
 	for (;;);
 }

@@ -80,18 +80,19 @@ void (*interruptHandlers[256])(void) = {
 
 void trap_init(void)
 {
-	extern struct Segdesc gdt[];
+    extern struct Segdesc gdt[];
 
-	// LAB 3: Your code here.
-	for (int i = 0; i < 32; ++i) 
-        SETGATE(idt[i], 0, GD_KT, interruptHandlers[i], 0);
+    for (int i = 0; i < 256; ++i) {
+        if (interruptHandlers[i])        // 只有非空才设门
+            SETGATE(idt[i], 0, GD_KT, interruptHandlers[i], 0);
+    }
+    // 允许用户触发断点
     SETGATE(idt[T_BRKPT], 0, GD_KT, interruptHandlers[T_BRKPT], 3);
+    // 系统调用仍用 interrupt gate（istrap=0），保持你原来的行为避免前面测试异常
     SETGATE(idt[T_SYSCALL], 0, GD_KT, interruptHandlers[T_SYSCALL], 3);
 
-	// Per-CPU setup 
-	trap_init_percpu();
+    trap_init_percpu();
 }
-
 // Initialize and load the per-CPU TSS and IDT
 void
 trap_init_percpu(void)
@@ -135,12 +136,10 @@ trap_init_percpu(void)
     c->cpu_ts.ts_iomb = sizeof(struct Taskstate);
 
     // 4. 在 GDT 中为当前 CPU 设置 TSS 描述符
-    // 每个 CPU 的 TSS 描述符放在 gdt[(GD_TSS0 >> 3) + id]
     gdt[(GD_TSS0 >> 3) + id] = SEG16(STS_T32A, (uint32_t) (&c->cpu_ts), sizeof(struct Taskstate) - 1, 0);
     gdt[(GD_TSS0 >> 3) + id].sd_s = 0; // 系统段
 
     // 5. 加载当前 CPU 的 TSS 选择子
-    // 选择子为 GD_TSS0 + (id << 3)
     ltr(GD_TSS0 + (id << 3));
 
     // 6. 加载 IDT
@@ -234,6 +233,11 @@ trap_dispatch(struct Trapframe *tf)
 	// Handle clock interrupts. Don't forget to acknowledge the
 	// interrupt using lapic_eoi() before calling the scheduler!
 	// LAB 4: Your code here.
+	if (tf->tf_trapno == IRQ_OFFSET + IRQ_TIMER) {
+		lapic_eoi();
+		sched_yield();
+		return;
+	}
 
 	// Unexpected trap: The user process or the kernel has a bug.
 	print_trapframe(tf);
@@ -271,6 +275,8 @@ trap(struct Trapframe *tf)
 		// Acquire the big kernel lock before doing any
 		// serious kernel work.
 		// LAB 4: Your code here.
+		lock_kernel();
+
 		assert(curenv);
 
 		// Garbage collect if current enviroment is a zombie
@@ -354,6 +360,46 @@ page_fault_handler(struct Trapframe *tf)
 
 	// LAB 4: Your code here.
 
+	// 2. 
+	if (!curenv->env_pgfault_upcall) {
+		// 如果没有注册处理函数, 直接进行销毁
+		cprintf("[%08x] user fault va %08x ip %08x\n",
+            curenv->env_id, fault_va, tf->tf_eip);
+        print_trapframe(tf);
+        env_destroy(curenv);
+        return;
+	}
+
+	// 3. 计算 UTrapframe压入的位置
+	uintptr_t utf_addr;
+	if (tf->tf_esp >= (UXSTACKTOP - PGSIZE) && tf->tf_esp < UXSTACKTOP) {
+		
+		utf_addr = tf->tf_esp - 4 - sizeof(struct UTrapframe);
+
+		user_mem_assert(curenv, (void*)(tf->tf_esp - 4), 4, PTE_U | PTE_W);
+	} else {
+		// 如果不是递归异常, 那么就直接从 TOP 开始进行压
+		utf_addr = UXSTACKTOP - sizeof(struct  UTrapframe);
+	}
+
+	user_mem_assert(curenv, (void*)utf_addr, sizeof(struct UTrapframe), PTE_U | PTE_W);
+
+	// 5. 构造 UTrapframe
+    struct UTrapframe *utf = (struct UTrapframe*)utf_addr;
+    utf->utf_fault_va = fault_va;
+    utf->utf_err = tf->tf_err;
+    utf->utf_regs = tf->tf_regs;
+    utf->utf_eip = tf->tf_eip;
+    utf->utf_eflags = tf->tf_eflags;
+    utf->utf_esp = tf->tf_esp;
+
+	
+    // 6. 修改 trapframe，跳转到 upcall
+    curenv->env_tf.tf_eip = (uintptr_t)curenv->env_pgfault_upcall;
+    curenv->env_tf.tf_esp = utf_addr;
+	env_run(curenv);
+
+bad:
 	// Destroy the environment that caused the fault.
 	cprintf("[%08x] user fault va %08x ip %08x\n",
 		curenv->env_id, fault_va, tf->tf_eip);
