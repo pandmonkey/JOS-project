@@ -26,6 +26,11 @@
 	if (!(__tmp__ & PTE_P) || !(__tmp__ & PTE_U) || (__tmp__ & ~PTE_SYSCALL))\
 	return -E_INVAL;\
 } while(0)
+
+
+static int cnt_ipc_send = 0, cnt_ipc_try_send = 0, cnt_ipc_recv = 0;
+
+static int ipc_send_page(struct Env*, struct Env*); 
 // Print a string to the system console.
 // The string is exactly 'len' characters long.
 // Destroys the environment on memory errors.
@@ -327,54 +332,7 @@ sys_page_unmap(envid_t envid, void *va)
 //	-E_NO_MEM if there's not enough memory to map srcva in envid's
 //		address space.
 
-static int
-sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)
-{
-    int r;
-    struct Env *dst;
 
-    if ((r = envid2env(envid, &dst, 0)) < 0)
-        return r;
-
-    // 目标必须在接收中
-    if (!dst->env_ipc_recving || dst->env_status != ENV_NOT_RUNNABLE)
-        return -E_IPC_NOT_RECV;
-
-    // 是否要传页
-    if (srcva < (void*)UTOP) {
-        if ((uintptr_t)srcva & (PGSIZE - 1))
-            return -E_INVAL;
-        if (perm & ~PTE_SYSCALL)
-            return -E_INVAL;
-        if (!(perm & PTE_U) || !(perm & PTE_P))
-            return -E_INVAL;
-
-        pte_t *pte;
-        struct PageInfo *pp = page_lookup(curenv->env_pgdir, srcva, &pte);
-        if (!pp)
-            return -E_INVAL;
-        if ((perm & PTE_W) && !(*pte & PTE_W))
-            return -E_INVAL;
-
-        // 如果接收方愿意接收页（dstva < UTOP）
-        if (dst->env_ipc_dstva < (void*)UTOP) {
-            if ((r = page_insert(dst->env_pgdir, pp, dst->env_ipc_dstva, perm)) < 0)
-                return r;
-            dst->env_ipc_perm = perm;
-        } else {
-            dst->env_ipc_perm = 0;
-        }
-    } else {
-        dst->env_ipc_perm = 0;
-    }
-
-    dst->env_ipc_recving = 0;
-    dst->env_ipc_from    = curenv->env_id;
-    dst->env_ipc_value   = value;
-    dst->env_status      = ENV_RUNNABLE;
-    dst->env_tf.tf_regs.reg_eax = 0;
-    return 0;
-}
 
 // Block until a value is ready.  Record that you want to receive
 // using the env_ipc_recving and env_ipc_dstva fields of struct Env,
@@ -390,14 +348,129 @@ sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)
 static int
 sys_ipc_recv(void *dstva)
 {
+	cnt_ipc_recv++;
     if (dstva < (void*)UTOP && ((uintptr_t)dstva & (PGSIZE - 1)))
         return -E_INVAL;
+    curenv->env_ipc_dstva = dstva;
 
+    // 优先处理等待队列
+    if (curenv->env_ipc_sendq) {
+        struct Env *s = curenv->env_ipc_sendq;
+        curenv->env_ipc_sendq = s->env_ipc_next;
+        s->env_ipc_next = NULL;
+        int r = ipc_send_page(s, curenv);
+        s->env_status = ENV_RUNNABLE;
+        s->env_tf.tf_regs.reg_eax = r;
+        if (r < 0) { // 映射失败继续睡
+            curenv->env_ipc_recving = 1;
+            curenv->env_status = ENV_NOT_RUNNABLE;
+            sched_yield();
+            return 0;
+        }
+        curenv->env_ipc_recving = 0;
+        curenv->env_ipc_from  = s->env_id;
+        curenv->env_ipc_value = s->env_ipc_snd_val;
+        curenv->env_tf.tf_regs.reg_eax = 0;
+        return 0;
+    }
+
+	
+
+    // 无发送者，睡眠
     curenv->env_ipc_recving = 1;
-    curenv->env_ipc_dstva   = dstva;
-    curenv->env_status      = ENV_NOT_RUNNABLE;
+    curenv->env_status = ENV_NOT_RUNNABLE;
     sched_yield();
-    return 0; // 不会真的到这里（只有错误才返回）
+    return 0;
+}
+
+static int
+sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)
+{
+	cnt_ipc_try_send++;
+    int r;
+    struct Env *dst;
+    if ((r = envid2env(envid, &dst, 0)) < 0)
+        return r;
+    if (!(dst->env_ipc_recving && dst->env_status == ENV_NOT_RUNNABLE))
+        return -E_IPC_NOT_RECV;
+
+    // 发送页（仅在双方都请求时）
+    dst->env_ipc_perm = 0;
+    if (srcva < (void*)UTOP && dst->env_ipc_dstva < (void*)UTOP) {
+        if ((uintptr_t)srcva & (PGSIZE - 1)) return -E_INVAL;
+        if (perm & ~PTE_SYSCALL) return -E_INVAL;
+        if (!(perm & PTE_U) || !(perm & PTE_P)) return -E_INVAL;
+        pte_t *pte;
+        struct PageInfo *pp = page_lookup(curenv->env_pgdir, srcva, &pte);
+        if (!pp) return -E_INVAL;
+        if ((perm & PTE_W) && !(*pte & PTE_W)) return -E_INVAL;
+        if ((r = page_insert(dst->env_pgdir, pp, dst->env_ipc_dstva, perm)) < 0)
+            return r;
+        dst->env_ipc_perm = perm;
+    }
+
+    dst->env_ipc_recving = 0;
+    dst->env_ipc_from  = curenv->env_id;
+    dst->env_ipc_value = value;
+    dst->env_status    = ENV_RUNNABLE;
+    dst->env_tf.tf_regs.reg_eax = 0;
+    return 0;
+}
+
+static int
+sys_ipc_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)
+{	
+	cnt_ipc_send++;
+    int r;
+    struct Env *dst;
+    if ((r = envid2env(envid, &dst, 0)) < 0)
+        return r;
+
+    // 直接交付
+    if (dst->env_ipc_recving && dst->env_status == ENV_NOT_RUNNABLE) {
+        curenv->env_ipc_snd_val  = value;
+        curenv->env_ipc_snd_va   = srcva;
+        curenv->env_ipc_snd_perm = perm;
+        r = ipc_send_page(curenv, dst);
+        if (r < 0) return r;
+        dst->env_ipc_recving = 0;
+        dst->env_ipc_from  = curenv->env_id;
+        dst->env_ipc_value = value;
+        dst->env_status    = ENV_RUNNABLE;
+        dst->env_tf.tf_regs.reg_eax = 0;
+        return 0;
+    }
+
+    // 队列阻塞
+    curenv->env_ipc_snd_val  = value;
+    curenv->env_ipc_snd_va   = srcva;
+    curenv->env_ipc_snd_perm = perm;
+    curenv->env_ipc_next = dst->env_ipc_sendq;
+    dst->env_ipc_sendq  = curenv;
+    curenv->env_status  = ENV_NOT_RUNNABLE;
+    sched_yield();
+    return 0;
+}
+
+static int
+ipc_send_page(struct Env *src, struct Env *dst)
+{
+    void *srcva = src->env_ipc_snd_va;
+    unsigned perm = src->env_ipc_snd_perm;
+    dst->env_ipc_perm = 0;
+    if (srcva < (void*)UTOP && dst->env_ipc_dstva < (void*)UTOP) {
+        if ((uintptr_t)srcva & (PGSIZE - 1)) return -E_INVAL;
+        if (perm & ~PTE_SYSCALL) return -E_INVAL;
+        if (!(perm & PTE_U) || !(perm & PTE_P)) return -E_INVAL;
+        pte_t *pte;
+        struct PageInfo *pp = page_lookup(src->env_pgdir, srcva, &pte);
+        if (!pp) return -E_INVAL;
+        if ((perm & PTE_W) && !(*pte & PTE_W)) return -E_INVAL;
+        int r = page_insert(dst->env_pgdir, pp, dst->env_ipc_dstva, perm);
+        if (r < 0) return r;
+        dst->env_ipc_perm = perm;
+    }
+    return 0;
 }
 
 // Dispatches to the correct kernel function, passing the arguments.
@@ -434,6 +507,12 @@ syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, 
 	return sys_ipc_try_send((envid_t)a1, a2, (void*)a3, (unsigned)a4);
     case SYS_ipc_recv:
         return sys_ipc_recv((void*)a1);
+	case SYS_ipc_send:
+        return sys_ipc_send((envid_t)a1, a2, (void*)a3, (unsigned)a4);
+	case 255:
+    	cprintf("cnt_ipc_send=%d cnt_ipc_try_send=%d cnt_ipc_recv=%d\n", cnt_ipc_send, cnt_ipc_try_send, cnt_ipc_recv);
+    return 0;
+
     default:
         return -E_INVAL;
     }

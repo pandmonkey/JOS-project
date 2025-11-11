@@ -1,0 +1,1 @@
+#define CONF_IPC_SLEEP 1

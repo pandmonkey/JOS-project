@@ -489,6 +489,14 @@ env_free(struct Env *e)
 	e->env_pgdir = 0;
 	page_decref(pa2page(pa));
 
+	while (e->env_ipc_sendq) {
+        struct Env *s = e->env_ipc_sendq;
+        e->env_ipc_sendq = s->env_ipc_next;
+        s->env_ipc_next = NULL;
+        s->env_status = ENV_RUNNABLE;
+        s->env_tf.tf_regs.reg_eax = -E_BAD_ENV;
+    }
+
 	// return the environment to the free list
 	e->env_status = ENV_FREE;
 	e->env_link = env_free_list;
@@ -571,6 +579,7 @@ env_run(struct Env *e)
 
 	// LAB 3: Your code here.
 	// 1. context switch:
+	// cprintf("env_run: %08x runs=%u status=%d\n", e->env_id, e->env_runs, e->env_status);
 	if (curenv != NULL) {
 		// 1
 		if (curenv->env_status == ENV_RUNNING) {

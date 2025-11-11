@@ -47,6 +47,13 @@ void
 ipc_send(envid_t to_env, uint32_t val, void *pg, int perm)
 {
 	// LAB 4: Your code here.
+
+#ifdef CONF_IPC_SLEEP
+	void *va = pg ? ROUNDDOWN(pg, PGSIZE) : (void*)UTOP;
+	int r = sys_ipc_send(to_env, val, va, perm);
+	if (r < 0)
+		panic("ipc_send: %e", r);
+#else
 	int r;
     void *sendva = pg ? ROUNDDOWN(pg, PGSIZE) : (void*)UTOP;
     for (;;) {
@@ -57,6 +64,7 @@ ipc_send(envid_t to_env, uint32_t val, void *pg, int perm)
             panic("ipc_send: %e", r);
         sys_yield();
     }
+#endif
 }
 
 // Find the first environment of the given type.  We'll use this to
